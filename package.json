@@ -1,0 +1,25 @@
+{
+  "name": "my-agent-project",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsx --env-file=.env src/index.ts",
+    "chroma:up": "docker run -d --name chroma-rag -p 8000:8000 -v chroma-rag-data:/chroma/chroma chromadb/chroma",
+    "chroma:down": "docker rm -f chroma-rag",
+    "chroma:inspect": "tsx --env-file=.env src/rag/inspect-chroma.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "chromadb": "^3.4.0",
+    "openai": "^6.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
