@@ -1,3 +1,13 @@
+/**
+ * CLI 入口 — 命令行交互模式
+ *
+ * 改造前：直接调用 chat(userInput)，对话状态存在 chat.ts 的模块级变量里
+ * 改造后：创建一个 Session 对象，调用 chat(session, userInput)
+ * 行为完全一致，只是状态从"隐式全局"变成了"显式传入"。
+ *
+ * 这个入口和 server.ts 共享同一套 ChatService 业务逻辑，
+ * 区别只是 I/O 方式不同（readline vs HTTP）。
+ */
 import readline from 'node:readline';
 import { chat, preloadRagKnowledge } from './services/chat-service.js';
 import * as sessionManager from './services/session-manager.js';
