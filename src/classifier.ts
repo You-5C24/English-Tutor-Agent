@@ -4,7 +4,7 @@
  * 这是整个 Agent 的"大脑第一步"——在生成回复之前，先用一次轻量的 LLM 调用
  * 判断用户输入属于哪个教学场景。分类结果决定了后续注入哪套 CoT 和 Few-shot。
  *
- * 工作流程：用户输入 → classify() → 返回场景标签 → chat.ts 根据标签动态组装 Prompt
+ * 工作流程：用户输入 → classify() → 返回场景标签 → chat-service 根据标签动态组装 Prompt
  *
  * 为什么不用正则/关键词匹配？
  * 因为像 "I go to school yesterday" 这样的语法错误没有明显关键词，

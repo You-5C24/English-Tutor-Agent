@@ -18,3 +18,12 @@ export const MAX_TOOL_ITERATIONS = 3;
 
 /** generateSummary() 的最大输出 token 数 */
 export const SUMMARY_MAX_TOKENS = 150;
+
+/** HTTP 服务监听端口 */
+export const SERVER_PORT = Number(process.env.PORT) || 3000;
+
+/** 会话过期时间（毫秒），默认 30 分钟 */
+export const SESSION_TTL = 30 * 60 * 1000;
+
+/** 会话清理扫描间隔（毫秒），默认 5 分钟 */
+export const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000;

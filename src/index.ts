@@ -1,5 +1,6 @@
 import readline from 'node:readline';
-import { chat, preloadRagKnowledge } from './chat.js';
+import { chat, preloadRagKnowledge } from './services/chat-service.js';
+import * as sessionManager from './services/session-manager.js';
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -15,9 +16,11 @@ function askQuestion(prompt: string): Promise<string> {
 async function main() {
   console.log('🎓 English Tutor Agent — loading RAG knowledge base...');
   await preloadRagKnowledge().catch(() => {
-    /* 错误已在 chat 内打印 */
+    /* 错误已在 chat-service 内打印 */
   });
   console.log('Ready! Type your message (or "exit" to quit):\n');
+
+  const session = sessionManager.create();
 
   while (true) {
     const userInput = await askQuestion('You: ');
@@ -31,7 +34,7 @@ async function main() {
     if (!userInput.trim()) continue;
 
     try {
-      const reply = await chat(userInput);
+      const { reply } = await chat(session, userInput);
       console.log(`\nTutor: ${reply}\n`);
     } catch (error) {
       console.error('\n[Error] Failed to get response:', error);

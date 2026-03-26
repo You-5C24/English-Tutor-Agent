@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx --env-file=.env src/index.ts",
+    "dev:cli": "tsx --env-file=.env src/index.ts",
+    "dev:server": "tsx --env-file=.env src/server.ts",
     "chroma:up": "docker run -d --name chroma-rag -p 8000:8000 -v chroma-rag-data:/chroma/chroma chromadb/chroma",
     "chroma:down": "docker rm -f chroma-rag",
     "chroma:inspect": "tsx --env-file=.env src/rag/inspect-chroma.ts"
@@ -14,7 +15,9 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@fastify/cors": "^11.2.0",
     "chromadb": "^3.4.0",
+    "fastify": "^5.8.4",
     "openai": "^6.32.0"
   },
   "devDependencies": {
