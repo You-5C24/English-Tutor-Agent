@@ -51,7 +51,7 @@ export function buildApp() {
     });
   });
 
-  app.register(chatRoutes);
+  app.register(chatRoutes, { prefix: '/api' });
 
   return app;
 }
