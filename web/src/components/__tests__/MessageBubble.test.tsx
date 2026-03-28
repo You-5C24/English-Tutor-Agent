@@ -5,7 +5,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { MessageBubble } from '@/components/MessageBubble';
-import type { Message } from '../../types/chat';
+import type { Message } from '@/types/chat';
 
 // 固定 fixture，避免 timestamp 波动影响快照类测试（本文件未做快照，仅语义清晰）
 const userMessage: Message = {
