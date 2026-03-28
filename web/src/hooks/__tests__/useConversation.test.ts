@@ -4,12 +4,12 @@
  */
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useConversation } from '../useConversation';
-import * as chatApi from '../../api/chat';
+import { useConversation } from '@/hooks/useConversation';
+import * as chatApi from '@/api/chat';
 
 // 只替换 sendChatMessage，保留真实 ChatApiError，否则 hook 内 instanceof 不成立
-vi.mock('../../api/chat', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('../../api/chat')>();
+vi.mock('@/api/chat', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/api/chat')>();
   return {
     ...mod,
     sendChatMessage: vi.fn(),
@@ -21,7 +21,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   // 为每条用户/助手消息提供稳定 id，便于断言顺序与条数
   vi.stubGlobal('crypto', {
-    randomUUID: vi.fn()
+    randomUUID: vi
+      .fn()
       .mockReturnValueOnce('user-msg-1')
       .mockReturnValueOnce('assistant-msg-1')
       .mockReturnValueOnce('user-msg-2')
@@ -69,26 +70,40 @@ describe('useConversation', () => {
   // 首轮不传 sessionId，后续请求应带上服务端返回的 sessionId
   it('passes sessionId on subsequent messages', async () => {
     mockedSendChatMessage
-      .mockResolvedValueOnce({ reply: 'Hi', sessionId: 'sid-1', scenario: 'greeting' })
-      .mockResolvedValueOnce({ reply: 'Sure', sessionId: 'sid-1', scenario: 'grammar' });
+      .mockResolvedValueOnce({
+        reply: 'Hi',
+        sessionId: 'sid-1',
+        scenario: 'greeting',
+      })
+      .mockResolvedValueOnce({
+        reply: 'Sure',
+        sessionId: 'sid-1',
+        scenario: 'grammar',
+      });
 
     const { result } = renderHook(() => useConversation());
 
     await act(async () => {
       await result.current.sendMessage('Hello');
     });
-    expect(mockedSendChatMessage).toHaveBeenCalledWith({ message: 'Hello', sessionId: undefined });
+    expect(mockedSendChatMessage).toHaveBeenCalledWith({
+      message: 'Hello',
+      sessionId: undefined,
+    });
 
     await act(async () => {
       await result.current.sendMessage('Teach me grammar');
     });
-    expect(mockedSendChatMessage).toHaveBeenCalledWith({ message: 'Teach me grammar', sessionId: 'sid-1' });
+    expect(mockedSendChatMessage).toHaveBeenCalledWith({
+      message: 'Teach me grammar',
+      sessionId: 'sid-1',
+    });
   });
 
   // ChatApiError：展示服务端 message，保留已发出的用户消息
   it('sets error on API failure', async () => {
     mockedSendChatMessage.mockRejectedValueOnce(
-      new chatApi.ChatApiError('Server error', 'LLM_ERROR', 500),
+      new chatApi.ChatApiError('Server error', 'LLM_ERROR', 500)
     );
 
     const { result } = renderHook(() => useConversation());
@@ -104,7 +119,9 @@ describe('useConversation', () => {
 
   // 非 ChatApiError（如网络 TypeError）：统一友好文案
   it('sets network error message on fetch failure', async () => {
-    mockedSendChatMessage.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    mockedSendChatMessage.mockRejectedValueOnce(
+      new TypeError('Failed to fetch')
+    );
 
     const { result } = renderHook(() => useConversation());
 
@@ -118,7 +135,7 @@ describe('useConversation', () => {
   // clearError 清空 error，不影响 messages
   it('clears error with clearError', async () => {
     mockedSendChatMessage.mockRejectedValueOnce(
-      new chatApi.ChatApiError('Error', 'LLM_ERROR', 500),
+      new chatApi.ChatApiError('Error', 'LLM_ERROR', 500)
     );
 
     const { result } = renderHook(() => useConversation());
@@ -149,8 +166,14 @@ describe('useConversation', () => {
   // 会话失效：提示用户重新开始，并清除本地 sessionId，便于下一轮当作新会话
   it('resets sessionId on SESSION_NOT_FOUND error', async () => {
     mockedSendChatMessage
-      .mockResolvedValueOnce({ reply: 'Hi', sessionId: 'sid-1', scenario: 'greeting' })
-      .mockRejectedValueOnce(new chatApi.ChatApiError('Session not found', 'SESSION_NOT_FOUND', 404));
+      .mockResolvedValueOnce({
+        reply: 'Hi',
+        sessionId: 'sid-1',
+        scenario: 'greeting',
+      })
+      .mockRejectedValueOnce(
+        new chatApi.ChatApiError('Session not found', 'SESSION_NOT_FOUND', 404)
+      );
 
     const { result } = renderHook(() => useConversation());
 
