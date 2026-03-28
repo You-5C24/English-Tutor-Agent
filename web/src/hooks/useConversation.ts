@@ -2,6 +2,15 @@ import { useState, useCallback } from 'react';
 import type { Message } from '../types/chat';
 import { sendChatMessage, ChatApiError } from '../api/chat';
 
+/** 非安全上下文（如部分局域网 IP）下可能没有 crypto.randomUUID */
+function newMessageId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') {
+    return c.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export interface UseConversationReturn {
   messages: Message[];
   isLoading: boolean;
@@ -25,7 +34,7 @@ export function useConversation(): UseConversationReturn {
     if (!trimmed || isLoading) return;
 
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: newMessageId(),
       role: 'user',
       content: trimmed,
       timestamp: Date.now(),
@@ -39,7 +48,7 @@ export function useConversation(): UseConversationReturn {
       const response = await sendChatMessage({ message: trimmed, sessionId });
 
       const assistantMessage: Message = {
-        id: crypto.randomUUID(),
+        id: newMessageId(),
         role: 'assistant',
         content: response.reply,
         timestamp: Date.now(),
