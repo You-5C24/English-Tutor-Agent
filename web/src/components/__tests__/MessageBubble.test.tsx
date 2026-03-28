@@ -4,7 +4,7 @@
  */
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { MessageBubble } from '../MessageBubble';
+import { MessageBubble } from '@/components/MessageBubble';
 import type { Message } from '../../types/chat';
 
 // 固定 fixture，避免 timestamp 波动影响快照类测试（本文件未做快照，仅语义清晰）
@@ -38,11 +38,16 @@ describe('MessageBubble', () => {
 
   // 布局：用户右对齐、助手左对齐（通过外层 flex 容器的 utility class 约定）
   it('applies different alignment for user vs assistant', () => {
-    const { container: userContainer } = render(<MessageBubble message={userMessage} />);
-    const { container: assistantContainer } = render(<MessageBubble message={assistantMessage} />);
+    const { container: userContainer } = render(
+      <MessageBubble message={userMessage} />
+    );
+    const { container: assistantContainer } = render(
+      <MessageBubble message={assistantMessage} />
+    );
 
     const userWrapper = userContainer.firstElementChild as HTMLElement;
-    const assistantWrapper = assistantContainer.firstElementChild as HTMLElement;
+    const assistantWrapper =
+      assistantContainer.firstElementChild as HTMLElement;
 
     expect(userWrapper.className).toContain('justify-end');
     expect(assistantWrapper.className).toContain('justify-start');
