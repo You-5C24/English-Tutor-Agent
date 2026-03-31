@@ -11,7 +11,7 @@ export default function App() {
         <h1 className="text-lg font-semibold">🎓 English Tutor</h1>
       </header>
       {/* flex-1 + overflow-hidden：让 ChatWindow 内部 ScrollArea 占满剩余高度 */}
-      <main className="flex-1 overflow-hidden">
+      <main className="min-h-0 flex-1 overflow-hidden">
         <ChatWindow
           messages={messages}
           isLoading={isLoading}

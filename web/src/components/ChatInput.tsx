@@ -36,7 +36,7 @@ export function ChatInput({ isLoading, onSend }: ChatInputProps) {
         e.preventDefault();
         doSend();
       }}
-      className="flex p-4 border-t"
+      className="flex shrink-0 border-t p-4"
     >
       <div className="flex min-w-0 flex-1 items-end gap-1 rounded-lg border border-border bg-background py-1.5 pl-3 pr-1.5 focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
         <textarea

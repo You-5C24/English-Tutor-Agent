@@ -19,9 +19,9 @@ export function ChatWindow({
   onDismissError,
 }: ChatWindowProps) {
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col">
       {error && (
-        <div className="flex items-center justify-between bg-destructive/10 text-destructive px-4 py-2 text-sm">
+        <div className="flex shrink-0 items-center justify-between bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <span>{error}</span>
           {/* aria-label 与文案「✕」一致，供测试与读屏定位 */}
           <button
