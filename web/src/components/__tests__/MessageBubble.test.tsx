@@ -1,7 +1,7 @@
 /**
  * MessageBubble 单元测试：
- * - 基础：文案、用户/助手对齐、用户多行纯文本（whitespace-pre-wrap）
- * - Markdown：仅助手消息解析；粗体/斜体/列表/多段、prose 排版、用户侧不解析、防 script 注入
+ * - 基础：文案渲染与用户/助手气泡布局类名差异
+ * - Markdown：助手消息的粗体、斜体、列表渲染；用户消息纯文本保持
  */
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
