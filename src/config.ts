@@ -22,8 +22,8 @@ export const SUMMARY_MAX_TOKENS = 150;
 /** HTTP 服务监听端口 */
 export const SERVER_PORT = Number(process.env.PORT) || 3000;
 
-/** 会话过期时间（毫秒），默认 30 分钟 */
-export const SESSION_TTL = 30 * 60 * 1000;
+/** SQLite 数据库文件路径（相对于项目根目录） */
+export const DB_PATH = 'data/english-tutor.db';
 
-/** 会话清理扫描间隔（毫秒），默认 5 分钟 */
-export const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000;
+/** 前端历史消息加载条数上限 */
+export const DISPLAY_MESSAGE_LIMIT = 30;

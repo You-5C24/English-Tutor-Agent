@@ -140,3 +140,6 @@ vite.config.ts.timestamp-*
 
 # Superpowers brainstorm artifacts
 .superpowers/
+
+# SQLite database files
+data/
