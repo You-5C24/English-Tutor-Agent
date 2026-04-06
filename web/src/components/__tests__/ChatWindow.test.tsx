@@ -29,6 +29,7 @@ describe('ChatWindow', () => {
         error={null}
         onSend={vi.fn()}
         onDismissError={vi.fn()}
+        onReset={vi.fn()}
       />
     );
 
@@ -46,6 +47,7 @@ describe('ChatWindow', () => {
         error="Something went wrong"
         onSend={vi.fn()}
         onDismissError={vi.fn()}
+        onReset={vi.fn()}
       />
     );
 
@@ -64,6 +66,7 @@ describe('ChatWindow', () => {
         error="Error"
         onSend={vi.fn()}
         onDismissError={onDismissError}
+        onReset={vi.fn()}
       />
     );
 

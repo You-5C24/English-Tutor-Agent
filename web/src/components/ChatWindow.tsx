@@ -8,22 +8,33 @@ interface ChatWindowProps {
   error: string | null;
   onSend: (text: string) => void;
   onDismissError: () => void;
+  onReset: () => void;
 }
 
-/** 聊天主容器：顶部可选错误条 + 消息列表 + 底部输入。 */
+/** 聊天主容器：顶部标题栏（含重新开始）+ 可选错误条 + 消息列表 + 底部输入。 */
 export function ChatWindow({
   messages,
   isLoading,
   error,
   onSend,
   onDismissError,
+  onReset,
 }: ChatWindowProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between border-b px-4 py-2">
+        <h1 className="text-sm font-medium">English Tutor</h1>
+        <button
+          type="button"
+          onClick={onReset}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          重新开始
+        </button>
+      </div>
       {error && (
         <div className="flex shrink-0 items-center justify-between bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <span>{error}</span>
-          {/* aria-label 与文案「✕」一致，供测试与读屏定位 */}
           <button
             type="button"
             onClick={onDismissError}

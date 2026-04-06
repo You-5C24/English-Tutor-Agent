@@ -2,8 +2,8 @@ import { useConversation } from './hooks/useConversation';
 import { ChatWindow } from './components/ChatWindow';
 
 export default function App() {
-  // 对话状态集中在 hook：消息、加载、错误、发送与清除错误
-  const { messages, isLoading, error, sendMessage, clearError } = useConversation();
+  // 对话状态集中在 hook：消息、加载、错误、发送、清除错误、重新开始
+  const { messages, isLoading, error, sendMessage, clearError, resetConversation } = useConversation();
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -18,6 +18,7 @@ export default function App() {
           error={error}
           onSend={sendMessage}
           onDismissError={clearError}
+          onReset={resetConversation}
         />
       </main>
     </div>
