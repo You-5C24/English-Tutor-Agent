@@ -3,20 +3,27 @@
  * 不依赖真实网络或后端。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { sendChatMessage, checkHealth, ChatApiError } from '@/api/chat';
+import {
+  sendChatMessage,
+  checkHealth,
+  fetchHistory,
+  resetConversation,
+  ChatApiError,
+} from '@/api/chat';
+import type { HistoryResponse } from '@/types/chat';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+/** 每例重置调用记录与返回值，避免串用例 */
 beforeEach(() => {
-  // 每个用例独立，避免 mock 调用次数/返回值串用例
   mockFetch.mockReset();
 });
 
 describe('sendChatMessage', () => {
-  // 成功路径：POST /api/chat、JSON body、解析并返回 ChatResponse
+  /** POST /api/chat、Content-Type 与 body 与 ChatRequest 一致 */
   it('sends request and returns response on success', async () => {
-    const mockResponse = { reply: 'Hello!', sessionId: 'sid-1', scenario: 'greeting' };
+    const mockResponse = { reply: 'Hello!', scenario: 'greeting' };
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve(mockResponse),
@@ -32,53 +39,99 @@ describe('sendChatMessage', () => {
     expect(result).toEqual(mockResponse);
   });
 
-  // 传入 sessionId 时应序列化进请求体，供续会话
-  it('includes sessionId in request when provided', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ reply: 'Hi', sessionId: 'sid-1', scenario: 'grammar' }),
-    });
-
-    await sendChatMessage({ message: 'Hi', sessionId: 'sid-1' });
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/chat', expect.objectContaining({
-      body: JSON.stringify({ message: 'Hi', sessionId: 'sid-1' }),
-    }));
-  });
-
-  // 4xx/5xx：应抛 ChatApiError，并带上服务端返回的 code、statusCode
+  /** 4xx/5xx：解析 ErrorResponse JSON 并抛出，带上 code / statusCode */
   it('throws ChatApiError on HTTP error', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
-      json: () => Promise.resolve({ error: 'Session not found', code: 'SESSION_NOT_FOUND', statusCode: 404 }),
+      json: () =>
+        Promise.resolve({
+          error: 'Failed to process message',
+          code: 'LLM_ERROR',
+          statusCode: 500,
+        }),
     });
 
-    await expect(sendChatMessage({ message: 'Hi', sessionId: 'bad-id' }))
-      .rejects.toThrow(ChatApiError);
+    await expect(sendChatMessage({ message: 'Hi' })).rejects.toThrow(ChatApiError);
 
     try {
       mockFetch.mockResolvedValueOnce({
         ok: false,
-        json: () => Promise.resolve({ error: 'Session not found', code: 'SESSION_NOT_FOUND', statusCode: 404 }),
+        json: () =>
+          Promise.resolve({
+            error: 'Failed to process message',
+            code: 'LLM_ERROR',
+            statusCode: 500,
+          }),
       });
-      await sendChatMessage({ message: 'Hi', sessionId: 'bad-id' });
+      await sendChatMessage({ message: 'Hi' });
     } catch (err) {
       expect(err).toBeInstanceOf(ChatApiError);
-      expect((err as ChatApiError).code).toBe('SESSION_NOT_FOUND');
-      expect((err as ChatApiError).statusCode).toBe(404);
+      expect((err as ChatApiError).code).toBe('LLM_ERROR');
+      expect((err as ChatApiError).statusCode).toBe(500);
     }
   });
 
-  // 网络层失败（如断网）：应原样抛出底层错误，不包装成 ChatApiError
-  it('throws ChatApiError on network failure', async () => {
+  /** fetch 自身抛错（断网等）时 sendChatMessage 不包装，由上层 hook 决定用户可见文案 */
+  it('rejects with TypeError when fetch rejects', async () => {
     mockFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     await expect(sendChatMessage({ message: 'Hi' })).rejects.toThrow(TypeError);
   });
 });
 
+describe('fetchHistory', () => {
+  /** GET /api/history，成功时返回 HistoryResponse */
+  it('returns messages on success', async () => {
+    const payload: HistoryResponse = {
+      messages: [{ id: '1', role: 'user', content: 'x', timestamp: 1 }],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(payload),
+    });
+
+    const result = await fetchHistory();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/history');
+    expect(result).toEqual(payload);
+  });
+
+  /** 与 sendChatMessage 错误分支一致：解析 JSON 错误体 */
+  it('throws ChatApiError on HTTP error', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      json: () =>
+        Promise.resolve({ error: 'Not found', code: 'NOT_FOUND', statusCode: 404 }),
+    });
+
+    await expect(fetchHistory()).rejects.toThrow(ChatApiError);
+  });
+});
+
+describe('resetConversation', () => {
+  /** POST /api/reset；成功时无 body 解析需求，仅校验 ok */
+  it('posts to reset and resolves on success', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    await resetConversation();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/reset', { method: 'POST' });
+  });
+
+  /** 失败时同样走 ErrorResponse → ChatApiError */
+  it('throws ChatApiError on HTTP error', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      json: () =>
+        Promise.resolve({ error: 'Bad', code: 'ERR', statusCode: 500 }),
+    });
+
+    await expect(resetConversation()).rejects.toThrow(ChatApiError);
+  });
+});
+
 describe('checkHealth', () => {
-  // 健康检查成功：解析 JSON 并返回 { ok: true }
+  /** 监控/探活用，与其它 API 错误类型统一 */
   it('returns ok on success', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -89,7 +142,7 @@ describe('checkHealth', () => {
     expect(result).toEqual({ ok: true });
   });
 
-  // 健康检查非 2xx：应抛 ChatApiError（或统一 API 错误类型）
+  /** 非 2xx 且无标准 ErrorResponse 体时用 HEALTH_CHECK_FAILED */
   it('throws on failure', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
 

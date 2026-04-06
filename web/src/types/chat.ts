@@ -8,13 +8,15 @@ export interface Message {
 
 export interface ChatRequest {
   message: string;
-  sessionId?: string;
 }
 
 export interface ChatResponse {
   reply: string;
-  sessionId: string;
   scenario: string;
+}
+
+export interface HistoryResponse {
+  messages: Message[];
 }
 
 export interface ErrorResponse {

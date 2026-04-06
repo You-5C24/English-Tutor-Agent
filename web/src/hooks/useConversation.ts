@@ -1,8 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { Message } from '../types/chat';
-import { sendChatMessage, ChatApiError } from '../api/chat';
+import { sendChatMessage, fetchHistory, resetConversation as apiReset, ChatApiError } from '../api/chat';
 
-/** 非安全上下文（如部分局域网 IP）下可能没有 crypto.randomUUID */
 function newMessageId(): string {
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === 'function') {
@@ -17,20 +16,28 @@ export interface UseConversationReturn {
   error: string | null;
   sendMessage: (text: string) => Promise<void>;
   clearError: () => void;
+  resetConversation: () => Promise<void>;
 }
 
 /**
- * 管理一轮对话：本地消息列表、与后端的 sessionId、发送中的加载态与可展示错误。
+ * 管理对话：挂载时从后端加载历史消息，发送消息时追加到列表，
+ * 支持重置对话清空记忆。
  */
 export function useConversation(): UseConversationReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | undefined>();
+
+  useEffect(() => {
+    fetchHistory()
+      .then((res) => setMessages(res.messages))
+      .catch(() => {
+        /* 历史加载失败静默处理，用户可正常开始新对话 */
+      });
+  }, []);
 
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
-    // 避免重复提交；空白不上屏、不调 API
     if (!trimmed || isLoading) return;
 
     const userMessage: Message = {
@@ -45,7 +52,7 @@ export function useConversation(): UseConversationReturn {
     setError(null);
 
     try {
-      const response = await sendChatMessage({ message: trimmed, sessionId });
+      const response = await sendChatMessage({ message: trimmed });
 
       const assistantMessage: Message = {
         id: newMessageId(),
@@ -56,24 +63,28 @@ export function useConversation(): UseConversationReturn {
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-      setSessionId(response.sessionId);
     } catch (err) {
       if (err instanceof ChatApiError) {
-        if (err.code === 'SESSION_NOT_FOUND') {
-          setError('会话已过期，请重新发送消息开始新对话');
-          setSessionId(undefined);
-        } else {
-          setError(err.message);
-        }
+        setError(err.message);
       } else {
         setError('网络连接失败，请检查网络后重试');
       }
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, sessionId]);
+  }, [isLoading]);
 
   const clearError = useCallback(() => setError(null), []);
 
-  return { messages, isLoading, error, sendMessage, clearError };
+  const handleReset = useCallback(async () => {
+    try {
+      await apiReset();
+      setMessages([]);
+      setError(null);
+    } catch {
+      setError('重置失败，请稍后重试');
+    }
+  }, []);
+
+  return { messages, isLoading, error, sendMessage, clearError, resetConversation: handleReset };
 }

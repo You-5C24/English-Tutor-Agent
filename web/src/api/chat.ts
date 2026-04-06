@@ -1,4 +1,4 @@
-import type { ChatRequest, ChatResponse, ErrorResponse } from '../types/chat';
+import type { ChatRequest, ChatResponse, HistoryResponse, ErrorResponse } from '../types/chat';
 
 const API_BASE = '/api';
 
@@ -27,6 +27,28 @@ export async function sendChatMessage(req: ChatRequest): Promise<ChatResponse> {
   }
 
   return res.json();
+}
+
+/** 加载最近的历史消息 */
+export async function fetchHistory(): Promise<HistoryResponse> {
+  const res = await fetch(`${API_BASE}/history`);
+
+  if (!res.ok) {
+    const err: ErrorResponse = await res.json();
+    throw new ChatApiError(err.error, err.code, err.statusCode);
+  }
+
+  return res.json();
+}
+
+/** 重置对话，清空所有记忆 */
+export async function resetConversation(): Promise<void> {
+  const res = await fetch(`${API_BASE}/reset`, { method: 'POST' });
+
+  if (!res.ok) {
+    const err: ErrorResponse = await res.json();
+    throw new ChatApiError(err.error, err.code, err.statusCode);
+  }
 }
 
 export async function checkHealth(): Promise<{ ok: boolean }> {
