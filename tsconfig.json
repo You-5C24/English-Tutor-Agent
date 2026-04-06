@@ -3,6 +3,10 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "strict": true, // 启用严格类型检查
     "esModuleInterop": true, // 兼容 CommonJS 导入
     "skipLibCheck": true, // 跳过库类型检查（加快编译）
