@@ -19,7 +19,9 @@ function newMessageId(): string {
   if (c && typeof c.randomUUID === 'function') {
     return c.randomUUID();
   }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  return `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}`;
 }
 
 interface ChatBody {
@@ -111,7 +113,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  app.get('/health', async () => {
+  app.get<{ Reply: { ok: true } }>('/health', async () => {
     return { ok: true };
   });
 }

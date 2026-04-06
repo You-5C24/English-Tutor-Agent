@@ -1,17 +1,15 @@
 /**
  * HTTP 服务启动入口（`npm run dev:server`）
  *
- * Phase 3 变更：
  * - 启动时初始化 SQLite 数据库
  * - 启动时从 DB 加载（或创建）session
- * - 移除 session 清理定时器（单用户永久 session）
  * - 关闭时释放 DB 连接
  */
-import { buildApp } from './app.js';
-import { preloadRagKnowledge } from './services/chat-service.js';
-import { initDefaultSession } from './services/session-manager.js';
-import { initDb, closeDb } from './db/database.js';
-import { SERVER_PORT } from './config.js';
+import { buildApp } from '@/app';
+import { preloadRagKnowledge } from '@/services/chat-service';
+import { initDefaultSession } from '@/services/session-manager';
+import { initDb, closeDb } from '@/db/database';
+import { SERVER_PORT } from '@/config';
 
 async function start() {
   const app = buildApp();
