@@ -92,7 +92,7 @@ describe('fetchHistory', () => {
 
     const result = await fetchHistory();
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/history');
+    expect(mockFetch).toHaveBeenCalledWith('/api/history', { signal: undefined });
     expect(result).toEqual(payload);
   });
 

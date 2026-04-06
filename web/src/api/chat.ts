@@ -29,9 +29,9 @@ export async function sendChatMessage(req: ChatRequest): Promise<ChatResponse> {
   return res.json();
 }
 
-/** 加载最近的历史消息 */
-export async function fetchHistory(): Promise<HistoryResponse> {
-  const res = await fetch(`${API_BASE}/history`);
+/** 加载最近的历史消息；可传 `signal` 与 React effect cleanup 配合取消请求 */
+export async function fetchHistory(options?: { signal?: AbortSignal }): Promise<HistoryResponse> {
+  const res = await fetch(`${API_BASE}/history`, { signal: options?.signal });
 
   if (!res.ok) {
     const err: ErrorResponse = await res.json();

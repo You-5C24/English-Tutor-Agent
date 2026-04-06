@@ -29,11 +29,21 @@ export function useConversation(): UseConversationReturn {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchHistory()
-      .then((res) => setMessages(res.messages))
-      .catch(() => {
+    const controller = new AbortController();
+
+    fetchHistory({ signal: controller.signal })
+      .then((res) => {
+        setMessages(res.messages);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (err instanceof Error && err.name === 'AbortError') return;
         /* 历史加载失败静默处理，用户可正常开始新对话 */
       });
+
+    return () => {
+      controller.abort();
+    };
   }, []);
 
   const sendMessage = useCallback(async (text: string) => {
