@@ -4,8 +4,8 @@
  * Phase 3 重构：从多 session 内存 Map 改为单 session + SQLite 持久化。
  * 启动时从 DB 加载唯一 session，运行时在内存中操作，chat 成功后写入 DB。
  */
-import { Session } from '../types/session.js';
-import * as sessionRepo from '../db/session-repo.js';
+import { Session } from '@/types/session';
+import * as sessionRepo from '@/db/session-repo';
 
 let defaultSession: Session | undefined;
 
@@ -38,7 +38,9 @@ export function initDefaultSession(): void {
 /** 获取内存中的唯一 session */
 export function getDefaultSession(): Session {
   if (!defaultSession) {
-    throw new Error('Session not initialized. Call initDefaultSession() first.');
+    throw new Error(
+      'Session not initialized. Call initDefaultSession() first.'
+    );
   }
   return defaultSession;
 }
