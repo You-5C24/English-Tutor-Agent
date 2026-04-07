@@ -1,57 +1,27 @@
 /**
- * 字典工具模块 — Function Calling 的核心
- *
- * 这个文件是实现 Function Calling 的三个关键角色：
- *
- * 1. dictionaryTool  —— "菜单"（告诉 LLM 有什么工具可以点）
- *    用 JSON Schema 格式描述函数的名称、用途、参数，LLM 通过这份描述来决定何时调用。
- *
- * 2. lookupWord()    —— "厨房"（真正干活的地方）
- *    接收 LLM 点的"菜"（单词），去真实的字典 API 取数据，处理后端上。
- *
- * 3. executeToolCall() —— "服务员"（负责把点单分配到对应厨师）
- *    目前只有一道菜，但这个路由设计方便未来扩展更多工具（如发音查询、例句搜索等）。
+ * 字典工具模块 — 使用 LangChain StructuredTool
  */
-
-import { ChatCompletionTool } from 'openai/resources';
-
-// ─────────────────────────────────────────────────────────────────
-// Part 1：Tool 定义 — 告诉 LLM "你有这个工具可以用"
-// ─────────────────────────────────────────────────────────────────
+import { StructuredTool } from '@langchain/core/tools';
+import { z } from 'zod';
 
 /**
- * dictionaryTool 是提交给 OpenAI API 的 tool 描述对象。
- *
- * LLM 通过阅读这份描述（name + description + parameters）来判断：
- * "用户问的问题，是否需要我调用这个工具来获取准确答案？"
- *
- * 关键字段说明：
- * - name:        LLM 调用时会返回这个字符串，我们用它来路由到正确的函数
- * - description: LLM 理解工具用途的依据，越准确 LLM 调用越精准
- * - parameters:  告诉 LLM 调用时需要传什么参数（标准 JSON Schema 格式）
+ * LangChain StructuredTool 版本的字典查询工具。
+ * chatModel.bindTools([dictionaryTool]) 时，LangChain 自动从 schema 生成 JSON Schema。
  */
-export const dictionaryTool: ChatCompletionTool = {
-  type: 'function',
-  function: {
-    name: 'lookupWord',
-    description:
-      '查询英语单词的详细定义、音标、例句和同义词。当用户询问某个英语单词的含义、用法时使用此工具，获取准确的字典数据。',
-    parameters: {
-      type: 'object',
-      properties: {
-        word: {
-          type: 'string',
-          description: '要查询的英语单词，只传单个单词，不含标点和空格',
-        },
-      },
-      required: ['word'],
-    },
-  },
-};
+export class DictionaryTool extends StructuredTool {
+  name = 'lookupWord';
+  description =
+    '查询英语单词的详细定义、音标、例句和同义词。当用户询问某个英语单词的含义、用法时使用此工具，获取准确的字典数据。';
+  schema = z.object({
+    word: z.string().describe('要查询的英语单词，只传单个单词，不含标点和空格'),
+  });
 
-// ─────────────────────────────────────────────────────────────────
-// Part 2：实际执行函数 — 调用免费字典 API 并格式化返回
-// ─────────────────────────────────────────────────────────────────
+  async _call({ word }: z.infer<typeof this.schema>): Promise<string> {
+    return lookupWord(word);
+  }
+}
+
+export const dictionaryTool = new DictionaryTool();
 
 /**
  * 调用 Free Dictionary API 查询单词，并将结果格式化为 LLM 易于理解的文本。
@@ -70,7 +40,9 @@ export const dictionaryTool: ChatCompletionTool = {
  * @returns 格式化后的字典数据字符串，供 LLM 读取和引用
  */
 export async function lookupWord(word: string): Promise<string> {
-  const apiUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
+  const apiUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(
+    word
+  )}`;
 
   try {
     const response = await fetch(apiUrl);
@@ -125,38 +97,6 @@ export async function lookupWord(word: string): Promise<string> {
     return `Dictionary lookup failed for '${word}' due to an error. Please answer based on your own knowledge.`;
   }
 }
-
-// ─────────────────────────────────────────────────────────────────
-// Part 3：工具路由函数 — 按函数名分发执行
-// ─────────────────────────────────────────────────────────────────
-
-/**
- * 根据 LLM 返回的函数名，路由到对应的实现函数。
- *
- * 为什么需要这层路由？
- * LLM 的 tool_call 只返回一个字符串函数名（如 "lookupWord"），
- * 我们需要把这个字符串映射到真实的 JS 函数。
- * 这层路由设计也方便未来新增工具：只需在这里加一个 else if 分支。
- *
- * @param name LLM 返回的函数名
- * @param args LLM 返回的参数对象（已从 JSON 字符串解析完毕）
- * @returns 函数执行结果字符串，将作为 tool message 传回给 LLM
- */
-export async function executeToolCall(
-  name: string,
-  args: Record<string, unknown>,
-): Promise<string> {
-  if (name === 'lookupWord') {
-    return lookupWord(args.word as string);
-  }
-
-  // 未知工具名，返回错误提示（不应该触发，除非 LLM 产生了幻觉函数名）
-  return `Unknown tool: "${name}". No action taken.`;
-}
-
-// ─────────────────────────────────────────────────────────────────
-// 内部类型定义 — 用于解析 Free Dictionary API 返回的 JSON
-// ─────────────────────────────────────────────────────────────────
 
 interface DictionaryEntry {
   word: string;

@@ -18,17 +18,23 @@
  *   第 2 次：chat() 主调用；VOCABULARY 场景若触发工具则会有第 3 次（基于 API 数据生成回复）
  *   （触发压缩时额外 +1 次：generateSummary() 生成摘要）
  */
-import { ChatCompletionMessageParam } from 'openai/resources';
-import { client } from '../client.js';
-import { classify, Scenario } from '../classifier.js';
-import { baseSystemPrompt } from '../prompts/base.js';
-import { vocabularyCot, vocabularyFewShot } from '../prompts/vocabulary.js';
-import { grammarCot, grammarFewShot } from '../prompts/grammar.js';
-import { expressionCot, expressionFewShot } from '../prompts/expression.js';
-import { offTopicCot } from '../prompts/offTopic.js';
-import { formatRagContext } from '../prompts/rag.js';
-import { initChromaRag, retrieveFromChroma } from '../rag/chroma-store.js';
-import { dictionaryTool, executeToolCall } from '../tools/dictionary.js';
+import {
+  AIMessage,
+  HumanMessage,
+  SystemMessage,
+} from '@langchain/core/messages';
+import type { BaseMessage } from '@langchain/core/messages';
+import { chatModel, summaryModel } from '@/llm/model';
+import { toBaseMessages, fromAIMessage } from '@/llm/model-helpers';
+import { classify, Scenario } from '@/classifier';
+import { baseSystemPrompt } from '@/prompts/base';
+import { vocabularyCot, vocabularyFewShot } from '@/prompts/vocabulary';
+import { grammarCot, grammarFewShot } from '@/prompts/grammar';
+import { expressionCot, expressionFewShot } from '@/prompts/expression';
+import { offTopicCot } from '@/prompts/offTopic';
+import { formatRagContext } from '@/prompts/rag';
+import { initChromaRag, retrieveFromChroma } from '@/rag/chroma-store';
+import { dictionaryTool } from '@/tools/dictionary';
 import {
   CHAT_MODEL,
   COMPRESS_THRESHOLD,
@@ -37,8 +43,9 @@ import {
   RAG_MIN_SCORE,
   MAX_TOOL_ITERATIONS,
   SUMMARY_MAX_TOKENS,
-} from '../config.js';
-import { Session, ChatResult } from '../types/session.js';
+} from '@/config';
+import { Session, ChatResult } from '@/types/session';
+import { ChatCompletionMessageParam } from 'openai/resources';
 
 /**
  * 场景配置表：每个场景对应一套 CoT（思维链）和 Few-shot（示范对话）。
@@ -68,7 +75,11 @@ export async function preloadRagKnowledge(): Promise<void> {
     chromaInitPromise = initChromaRag()
       .then((ok) => {
         chromaReady = ok;
-        console.log(ok ? '  [RAG] Chroma 已就绪' : '  [RAG] Chroma 初始化失败，本次不使用 RAG');
+        console.log(
+          ok
+            ? '  [RAG] Chroma 已就绪'
+            : '  [RAG] Chroma 初始化失败，本次不使用 RAG'
+        );
       })
       .catch((err) => {
         chromaReady = false;
@@ -79,7 +90,11 @@ export async function preloadRagKnowledge(): Promise<void> {
 }
 
 /** 打印当前上下文状态面板，方便调试时直观观察压缩效果 */
-function logContextStatus(label: string, messageCount?: number, session?: Session) {
+function logContextStatus(
+  label: string,
+  messageCount?: number,
+  session?: Session
+) {
   const history = session?.history ?? [];
   const summary = session?.summary ?? '';
   const rounds = history.length / 2;
@@ -126,22 +141,14 @@ async function generateSummary(
     ? `以下是之前的对话摘要：\n${previousSummary}\n\n以下是最近的对话内容：\n${conversationText}\n\n请将以上所有信息总结成1-2句话的摘要，用中文概括主要讨论内容和用户的学习重点。`
     : `请总结以下对话的关键信息，用1-2句话概括主要讨论内容和用户的学习重点。\n\n${conversationText}`;
 
-  const completion = await client.chat.completions.create({
-    model: CHAT_MODEL,
-    messages: [
-      {
-        role: 'system',
-        content:
-          '你是一个对话摘要助手。请用简洁的中文总结对话内容，保留关键学习点和用户水平信息。',
-      },
-      { role: 'user', content: summaryPrompt },
-    ],
-    max_completion_tokens: SUMMARY_MAX_TOKENS,
-    // @ts-expect-error kimi-k2.5 扩展参数，关闭思考模式以节省 token（摘要任务无需深度推理）
-    thinking: { type: 'disabled' },
-  });
+  const response = await summaryModel.invoke([
+    new SystemMessage(
+      '你是一个对话摘要助手。请用简洁的中文总结对话内容，保留关键学习点和用户水平信息。'
+    ),
+    new HumanMessage(summaryPrompt),
+  ]);
 
-  return completion.choices[0].message.content?.trim() ?? '';
+  return fromAIMessage(response).trim();
 }
 
 /**
@@ -194,12 +201,15 @@ async function buildSystemPrompt(
 
   if (scenario !== 'OFF_TOPIC' && chromaReady) {
     try {
-      const top = (await retrieveFromChroma(userMessage, RAG_TOP_K))
-        .filter((t) => t.score >= RAG_MIN_SCORE);
+      const top = (await retrieveFromChroma(userMessage, RAG_TOP_K)).filter(
+        (t) => t.score >= RAG_MIN_SCORE
+      );
       if (top.length > 0) {
         systemPrompt += '\n\n' + formatRagContext(top);
         console.log(
-          `  [RAG] 已注入 ${top.length} 条（分数: ${top.map((t) => t.score.toFixed(3)).join(', ')})`
+          `  [RAG] 已注入 ${top.length} 条（分数: ${top
+            .map((t) => t.score.toFixed(3))
+            .join(', ')})`
         );
       }
     } catch (err) {
@@ -215,15 +225,16 @@ async function buildSystemPrompt(
  */
 async function runToolLoop(
   messages: ChatCompletionMessageParam[],
-  tools: typeof dictionaryTool[] | undefined
+  useTools: boolean
 ): Promise<string> {
-  const loopMessages: ChatCompletionMessageParam[] = [...messages];
+  const loopMessages: BaseMessage[] = toBaseMessages(messages);
   let reply = '';
   let iterations = 0;
 
+  const model = useTools ? chatModel.bindTools([dictionaryTool]) : chatModel;
+
   while (true) {
     iterations++;
-
     if (iterations > MAX_TOOL_ITERATIONS) {
       console.log(
         `  [Tool] 已达最大迭代次数 (${MAX_TOOL_ITERATIONS})，强制结束循环`
@@ -231,31 +242,18 @@ async function runToolLoop(
       break;
     }
 
-    const completion = await client.chat.completions.create({
-      model: CHAT_MODEL,
-      messages: loopMessages,
-      tools,
-    });
+    const response = await model.invoke(loopMessages);
+    loopMessages.push(response);
 
-    const message = completion.choices[0].message;
-
-    if (message.tool_calls && message.tool_calls.length > 0) {
-      loopMessages.push(message as ChatCompletionMessageParam);
-
-      for (const toolCall of message.tool_calls.filter(
-        (tc) => tc.type === 'function'
-      )) {
-        const functionName = toolCall.function.name;
-        const args = JSON.parse(toolCall.function.arguments) as Record<
-          string,
-          unknown
-        >;
-
+    if (response.tool_calls && response.tool_calls.length > 0) {
+      for (const toolCall of response.tool_calls) {
         console.log(
-          `  [Tool] 调用函数: ${functionName}(${toolCall.function.arguments})`
+          `  [Tool] 调用函数: ${toolCall.name}(${JSON.stringify(
+            toolCall.args
+          )})`
         );
 
-        const toolResult = await executeToolCall(functionName, args);
+        const toolResult = await dictionaryTool.invoke(toolCall.args);
 
         console.log(
           `  [Tool] 执行结果: ${toolResult.slice(0, 100)}${
@@ -263,29 +261,41 @@ async function runToolLoop(
           }`
         );
 
-        loopMessages.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: toolResult,
-        });
+        const { ToolMessage } = await import('@langchain/core/messages');
+        loopMessages.push(
+          new ToolMessage({
+            content: toolResult,
+            tool_call_id: toolCall.id ?? '',
+          })
+        );
       }
-
       continue;
     }
 
-    reply = message.content ?? '';
+    reply = fromAIMessage(response);
     break;
   }
 
   return reply;
 }
 
-export async function chat(session: Session, userMessage: string): Promise<ChatResult> {
-  const [scenario] = await Promise.all([classify(userMessage), compressHistory(session)]);
+export async function chat(
+  session: Session,
+  userMessage: string
+): Promise<ChatResult> {
+  const [scenario] = await Promise.all([
+    classify(userMessage),
+    compressHistory(session),
+  ]);
   console.log(`  [Router] Detected scenario: ${scenario}`);
 
   const { cot, fewShot } = scenarioConfig[scenario];
-  const systemPrompt = await buildSystemPrompt(scenario, cot, session.summary, userMessage);
+  const systemPrompt = await buildSystemPrompt(
+    scenario,
+    cot,
+    session.summary,
+    userMessage
+  );
 
   const messages: ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
@@ -300,8 +310,8 @@ export async function chat(session: Session, userMessage: string): Promise<ChatR
     session
   );
 
-  const tools = scenario === 'VOCABULARY' ? [dictionaryTool] : undefined;
-  const reply = await runToolLoop(messages, tools);
+  const useTools = scenario === 'VOCABULARY';
+  const reply = await runToolLoop(messages, useTools);
 
   session.history.push({ role: 'user', content: userMessage });
   session.history.push({ role: 'assistant', content: reply });
