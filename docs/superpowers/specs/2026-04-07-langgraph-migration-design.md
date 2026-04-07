@@ -214,7 +214,7 @@ export const TutorState = Annotation.Root({
 | `compress` | `chat-service.ts: compressHistory()` | `history`, `summary` | `compressedHistory`, `compressedSummary` | 0 或 1 次（仅触发压缩时） |
 | `buildPrompt` | `chat-service.ts: buildSystemPrompt()` + `scenarioConfig` 查表 | `scenario`, `compressedSummary`, `userMessage` | `systemPrompt`, `fewShot`, `activeTools`, `messages`（初始消息列表） | 0 次（RAG 检索不算 LLM） |
 | `callLLM` | `runToolLoop` 中的 `client.chat.completions.create()` | `messages`, `activeTools` | `messages`（追加 LLM 响应） | 1 次 |
-| `executeTools` | `runToolLoop` 中的 tool_calls 处理 | `messages`（最后一条的 tool_calls） | `messages`（追加 tool 结果） | 0 次（API 调用，非 LLM） |
+| `executeTools` | `runToolLoop` 中的 tool_calls 处理 | `messages`（最后一条的 tool_calls） | `messages`（追加 tool 结果）、`toolIterations`（+1） | 0 次（API 调用，非 LLM） |
 | `respond` | `chat()` 末尾的 return | `messages`, `scenario` | `reply` | 0 次 |
 
 ### 5.2 边定义
@@ -258,6 +258,8 @@ const workflow = new StateGraph(TutorState)
 
 ### 5.3 条件路由函数
 
+**callLLM 的出边路由**：决定是进入工具执行还是直接回复。
+
 ```typescript
 function routeAfterLLM(state: typeof TutorState.State): "executeTools" | "respond" {
   const lastMessage = state.messages.at(-1);
@@ -267,6 +269,19 @@ function routeAfterLLM(state: typeof TutorState.State): "executeTools" | "respon
   return "respond";
 }
 ```
+
+**executeTools 的出边路由**：决定是继续循环还是因达上限而终止（详见 §7 Phase 3）。
+
+```typescript
+function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" {
+  if (state.toolIterations >= MAX_TOOL_ITERATIONS) {
+    return "respond";
+  }
+  return "callLLM";
+}
+```
+
+**边界情况**：当因 `toolIterations` 达上限而强制路由到 `respond` 时，最后一条消息可能是 tool 结果而非文本回复。`respond` 节点应处理此情况——从 messages 中提取最后一条包含文本内容的 AI 消息，若无则返回一个兜底提示（如「抱歉，我暂时无法完成查询，请稍后再试」）。
 
 ### 5.4 节点实现要点
 
@@ -689,7 +704,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 | 事项 | 为什么不做 |
 |------|-----------|
-| 替换 SQLite 持久化 | 与编排层改造正交，Phase 3（对话持久化）设计已满足需求 |
+| 替换 SQLite 持久化 | 与编排层改造正交，产品 Phase 3（对话持久化）设计已满足需求 |
 | 引入 LangGraph checkpointer | 现有 session 管理已工作良好；checkpointer 是未来可选增强 |
 | 前端 Streaming UI | 是产品层面的 Phase 4，本次只确保后端「可接入」 |
 | 多 Agent / 子图 | 当前单图足够，多 Agent 是未来架构升级 |
@@ -752,10 +767,10 @@ src/
 
 | 阶段 | 预估工作量 | 前置条件 |
 |------|-----------|---------|
-| Phase 0 | 1-2 天 | 无 |
-| Phase 1 | 2-3 天 | Phase 0 完成 |
-| Phase 2 | 1-2 天 | Phase 1 完成 |
-| Phase 3 | 1-2 天 | Phase 2 完成 |
-| Phase 4 | 1 天 | Phase 3 完成 |
+| 迁移 Phase 0 | 1-2 天 | 无 |
+| 迁移 Phase 1 | 2-3 天 | Phase 0 完成 |
+| 迁移 Phase 2 | 1-2 天 | Phase 1 完成 |
+| 迁移 Phase 3 | 1-2 天 | Phase 2 完成 |
+| 迁移 Phase 4 | 1 天 | Phase 3 完成 |
 
 总计约 **6-10 天**（含学习时间），可根据实际节奏调整。每个阶段之间可以有间隔，系统始终保持可用状态。
