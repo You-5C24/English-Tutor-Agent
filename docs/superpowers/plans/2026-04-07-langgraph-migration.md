@@ -100,7 +100,7 @@ git commit -m "chore: add @langchain/core, @langchain/openai, zod dependencies"
 
 ```typescript
 import { ChatOpenAI } from '@langchain/openai';
-import { CHAT_MODEL } from '../config.js';
+import { CHAT_MODEL, SUMMARY_MAX_TOKENS } from '../config.js';
 
 /**
  * 主对话模型 — 通过 OpenAI 兼容接口连接 Moonshot。
@@ -120,7 +120,9 @@ export const chatModel = new ChatOpenAI({
  * 通过 .bind() 传递 Moonshot 扩展参数。
  */
 export const summaryModel = chatModel.bind({
-  max_completion_tokens: 150,
+  max_completion_tokens: SUMMARY_MAX_TOKENS,
+  // @ts-expect-error Moonshot 扩展参数：关闭思考模式以节省 token（摘要无需深度推理）
+  thinking: { type: 'disabled' },
 });
 ```
 
@@ -1036,7 +1038,42 @@ git commit -m "feat(graph): add session ↔ BaseMessage adapters"
 
 ---
 
-## Task 1.4: 创建各节点（classify、compress、buildPrompt、callLLM、respond）
+## Task 1.4: 导出 chromaReady 状态函数
+
+**Files:**
+- Modify: `src/rag/chroma-store.ts`
+
+`buildPromptNode`（下一个 Task）需要知道 Chroma 是否就绪。当前 `chromaReady` 是 `chat-service.ts` 的模块级变量。需要将其移到或暴露于 `chroma-store.ts`。
+
+- [ ] **Step 1: 在 `chroma-store.ts` 中添加 `isChromaReady()` 导出函数**
+
+在 `src/rag/chroma-store.ts` 文件末尾添加：
+
+```typescript
+/** 供图节点查询 Chroma 是否已初始化就绪 */
+export function isChromaReady(): boolean {
+  return chromaReady === true;
+}
+```
+
+如果 `chromaReady` 当前在 `chat-service.ts` 中而非 `chroma-store.ts` 中，需要将其移到 `chroma-store.ts`。查看当前 `chroma-store.ts` 的实现确定具体做法。
+
+- [ ] **Step 2: 验证编译**
+
+```bash
+npx tsc --noEmit
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/rag/chroma-store.ts
+git commit -m "refactor(rag): export isChromaReady() for graph node access"
+```
+
+---
+
+## Task 1.5: 创建各节点（classify、compress、buildPrompt、callLLM、respond）
 
 **Files:**
 - Create: `src/graph/nodes/classify.ts`
@@ -1256,13 +1293,27 @@ export async function callLLMNode(
 import type { TutorStateType } from '../state.js';
 
 /**
- * 图的最终节点：reply 已在 callLLM 中设置，此节点做透传。
- * Phase 2+ 中此节点可扩展后处理逻辑（如日志、指标）。
+ * 图的最终节点。
+ * 正常路径：reply 已在 callLLM 中设置，直接透传。
+ * 边界情况（Phase 3 工具循环达上限）：reply 可能为空，
+ * 此时从 messages 中提取最后一条有文本的 AI 消息，或返回兜底提示。
  */
 export async function respondNode(
   state: TutorStateType
 ): Promise<Partial<TutorStateType>> {
-  return { reply: state.reply };
+  if (state.reply) {
+    return { reply: state.reply };
+  }
+
+  const lastAI = [...state.messages]
+    .reverse()
+    .find((m) => m._getType() === 'ai' && m.content && typeof m.content === 'string' && m.content.length > 0);
+
+  const fallback = lastAI
+    ? (lastAI.content as string)
+    : '抱歉，我暂时无法完成查询，请稍后再试。';
+
+  return { reply: fallback };
 }
 ```
 
@@ -1271,43 +1322,6 @@ export async function respondNode(
 ```bash
 git add src/graph/nodes/
 git commit -m "feat(graph): create all graph nodes (classify, compress, buildPrompt, callLLM, respond)"
-```
-
----
-
-## Task 1.5: 导出 chromaReady 状态函数
-
-**Files:**
-- Modify: `src/rag/chroma-store.ts`
-
-`buildPromptNode` 需要知道 Chroma 是否就绪。当前 `chromaReady` 是 `chat-service.ts` 的模块级变量。需要将其移到或暴露于 `chroma-store.ts`。
-
-- [ ] **Step 1: 在 `chroma-store.ts` 中添加 `isChromaReady()` 导出函数**
-
-在 `src/rag/chroma-store.ts` 文件末尾添加：
-
-```typescript
-/** 供图节点查询 Chroma 是否已初始化就绪 */
-export function isChromaReady(): boolean {
-  // chromaReady 是此文件中的模块级变量（initChromaRag 成功后设为 true）
-  // 如果该变量目前不在 chroma-store.ts 中，需要在此文件中维护它
-  return chromaReady === true;
-}
-```
-
-如果 `chromaReady` 当前在 `chat-service.ts` 中而非 `chroma-store.ts` 中，需要将其移到 `chroma-store.ts`。查看当前 `chroma-store.ts` 的实现确定具体做法。
-
-- [ ] **Step 2: 验证编译**
-
-```bash
-npx tsc --noEmit
-```
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/rag/chroma-store.ts
-git commit -m "refactor(rag): export isChromaReady() for graph node access"
 ```
 
 ---
