@@ -10,8 +10,10 @@
  * 因为像 "I go to school yesterday" 这样的语法错误没有明显关键词，
  * 只有 LLM 才能理解语义并正确归类为 GRAMMAR_CORRECTION。
  */
-import { client } from './client.js';
-import { CHAT_MODEL } from './config.js';
+import { SystemMessage } from '@langchain/core/messages';
+import type { AIMessage } from '@langchain/core/messages';
+import { chatModel } from '@/llm/model';
+import { fromAIMessage } from '@/llm/model-helpers';
 
 export type Scenario = 'VOCABULARY' | 'GRAMMAR_CORRECTION' | 'EXPRESSION' | 'OFF_TOPIC';
 
@@ -41,17 +43,11 @@ User message: "${userMessage}"
  * 如果模型返回了不在预定义列表中的值，兜底返回 OFF_TOPIC（安全默认值）。
  */
 export async function classify(userMessage: string): Promise<Scenario> {
-  const completion = await client.chat.completions.create({
-    model: CHAT_MODEL,
-    messages: [
-      {
-        role: 'system',
-        content: classifyPrompt(userMessage),
-      },
-    ],
-  });
+  const response = await chatModel.invoke([
+    new SystemMessage(classifyPrompt(userMessage)),
+  ]);
 
-  const result = (completion.choices[0].message.content ?? '').trim();
+  const result = fromAIMessage(response as AIMessage).trim();
 
   if (VALID_SCENARIOS.includes(result as Scenario)) {
     return result as Scenario;
