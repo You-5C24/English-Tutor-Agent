@@ -16,10 +16,13 @@
   "type": "module",
   "dependencies": {
     "@fastify/cors": "^11.2.0",
+    "@langchain/core": "^1.1.39",
+    "@langchain/openai": "^1.4.2",
     "better-sqlite3": "^12.8.0",
     "chromadb": "^3.4.0",
     "fastify": "^5.8.4",
-    "openai": "^6.32.0"
+    "openai": "^6.32.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
