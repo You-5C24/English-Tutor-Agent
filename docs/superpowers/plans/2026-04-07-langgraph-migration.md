@@ -98,31 +98,37 @@ git commit -m "chore: add @langchain/core, @langchain/openai, zod dependencies"
 
 - [ ] **Step 1: 创建 `src/llm/model.ts`**
 
+`@langchain/openai` v1 的 `ChatOpenAI` 无 `.bind()`；摘要需**独立实例**：Completions 路径用实例上的 `maxTokens`（由 `maxCompletionTokens` 设置），`withConfig` 合并的字段不会改到该字段。Moonshot 的 `thinking` 等非 OpenAI 标准字段走 `modelKwargs` 进入请求体。
+
 ```typescript
 import { ChatOpenAI } from '@langchain/openai';
 import { CHAT_MODEL, SUMMARY_MAX_TOKENS } from '../config.js';
+
+const moonshotLlmFields = {
+  configuration: {
+    baseURL: 'https://api.moonshot.cn/v1',
+  },
+  apiKey: process.env.MOONSHOT_API_KEY,
+  model: CHAT_MODEL,
+};
 
 /**
  * 主对话模型 — 通过 OpenAI 兼容接口连接 Moonshot。
  * ChatOpenAI 的 configuration.baseURL 让它指向 Moonshot 而非 OpenAI。
  * 所有需要 LLM 的地方（分类、主对话、摘要）复用这一个实例。
  */
-export const chatModel = new ChatOpenAI({
-  configuration: {
-    baseURL: 'https://api.moonshot.cn/v1',
-  },
-  apiKey: process.env.MOONSHOT_API_KEY,
-  model: CHAT_MODEL,
-});
+export const chatModel = new ChatOpenAI(moonshotLlmFields);
 
 /**
- * 摘要专用模型配置 — 关闭 Moonshot 的思考模式以节省 token。
- * 通过 .bind() 传递 Moonshot 扩展参数。
+ * 摘要专用模型 — 限制输出长度并关闭 Moonshot thinking（kimi-k2.5 默认 thinking 可能导致摘要为空）。
+ * 使用独立实例：completions 路径从实例字段读取 maxTokens；Moonshot 扩展字段经 modelKwargs 传入。
  */
-export const summaryModel = chatModel.bind({
-  max_completion_tokens: SUMMARY_MAX_TOKENS,
-  // @ts-expect-error Moonshot 扩展参数：关闭思考模式以节省 token（摘要无需深度推理）
-  thinking: { type: 'disabled' },
+export const summaryModel = new ChatOpenAI({
+  ...moonshotLlmFields,
+  maxCompletionTokens: SUMMARY_MAX_TOKENS,
+  modelKwargs: {
+    thinking: { type: 'disabled' },
+  },
 });
 ```
 
