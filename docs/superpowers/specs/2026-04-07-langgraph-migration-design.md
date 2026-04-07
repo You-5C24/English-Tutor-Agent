@@ -173,7 +173,7 @@ Phase 1（MVP 文字聊天）                    ✅ 已完成
 
 ## 3. 技术选型结论
 
-### 2.1 选择：LangGraph StateGraph + LangChain 原语
+### 3.1 选择：LangGraph StateGraph + LangChain 原语
 
 **不选 LangChain Only（LCEL）的原因：**
 
@@ -188,7 +188,7 @@ Phase 1（MVP 文字聊天）                    ✅ 已完成
 
 **不选 `createReactAgent` 预构建的原因：** 不支持场景分类路由，会丢失 CoT/Few-shot 按场景注入的核心设计。
 
-### 2.2 现有代码与 LangGraph 概念的对应
+### 3.2 现有代码与 LangGraph 概念的对应
 
 | 你已经写过/理解的 | LangGraph 对应概念 | 说明 |
 |---|---|---|
