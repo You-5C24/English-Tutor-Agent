@@ -563,6 +563,16 @@ function fromBaseMessage(msg: BaseMessage): ChatCompletionMessageParam { ... }
 - [ ] 能说出 `StructuredTool` 的 `_call` 方法在什么时候被调用
 - [ ] 替换后所有现有测试通过，手动验证四种场景行为不变
 
+**Moonshot `thinking` 与多轮工具调用（Phase 0 结论）**
+
+改造前使用 OpenAI SDK 直连时，主模型可以开启 Moonshot 的 `thinking`：上一轮接口返回的 `assistant` 消息（含 `tool_calls` 时）若带有扩展字段 `reasoning_content`，通常会被**原样放入**下一轮 `messages` 再请求，服务端校验能通过。
+
+接入 LangChain `ChatOpenAI` 后，`runToolLoop` 等路径会把响应解析为 `AIMessage` 并 `push` 进 `BaseMessage[]` 再 `invoke`。**`reasoning_content` 属于 Moonshot 扩展**，在 LangChain 的标准序列化链路里往往**不会随多轮往返完整保留**；当服务端仍判定 `thinking` 已开启时，会出现类似 `400 thinking is enabled but reasoning_content is missing in assistant tool call message` 的错误。摘要路径上 kimi-k2.5 的 thinking 也可能导致空摘要等问题。
+
+**Phase 0 现行做法**：在 `src/llm/model.ts` 中对**主对话**与**摘要**使用的 `ChatOpenAI` 实例统一设置 `modelKwargs: { thinking: { type: 'disabled' } }`，与直连时代「能开 thinking」的体验取舍不同，但保证工具循环与摘要在当前栈下稳定。
+
+> **后续值得优化的点**（非 Phase 0 必做）：若产品需要重新启用 `thinking`（利用 Kimi 推理链能力），需要在多轮对话中**显式持久化并在每次请求中回传** `reasoning_content`（或 Moonshot 后续约定的等价字段）。可能方向包括：自定义「API 消息 ↔ BaseMessage」适配层并挂载 provider 元数据、对工具循环使用保留扩展字段的序列化、或仅在单轮/无 tool 路径启用 thinking 并与 LangChain 路径拆分。实现前需对照 Moonshot 最新 OpenAI 兼容文档做契约验证。
+
 ---
 
 ### Phase 1：最简 StateGraph（线性图，无条件边）
@@ -818,7 +828,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|---------|
-| Moonshot API 与 `ChatOpenAI` 不完全兼容（如 `thinking` 参数） | Phase 0 阻塞 | Phase 0 第一步即验证；若不兼容，compress 节点内保留原始 SDK 调用 |
+| Moonshot `thinking` 与 LangChain 多轮消息往返（`reasoning_content` 丢失导致工具循环 400 等） | Phase 0 主对话/工具场景异常 | 见 Phase 0 节「Moonshot thinking 与多轮工具调用」；Phase 0 对主模型与摘要统一 `thinking: disabled`；启用 thinking 属后续优化项 |
 | LangGraph 引入的间接依赖与现有依赖版本冲突 | 构建失败 | Phase 0 安装后立即 `npm ls` 检查；必要时 pin 版本 |
 | 图状态设计不合理导致后续阶段返工 | Phase 1-2 需要调整 State | Phase 1 用最简 State，按需渐进扩展字段 |
 | 并行 fan-out 在 LangGraph.js 中的行为与预期不符 | Phase 2 阻塞 | Phase 2 前先写独立验证脚本；若不支持原生 fan-out，回退到 Phase 1 的串行方案 |
