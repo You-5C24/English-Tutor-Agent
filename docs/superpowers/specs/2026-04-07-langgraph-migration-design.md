@@ -10,17 +10,18 @@
 ## 目录
 
 1. [改造目标与非目标](#1-改造目标与非目标)
-2. [技术选型结论](#2-技术选型结论)
-3. [架构总览：当前 vs 改造后](#3-架构总览当前-vs-改造后)
-4. [State Schema 设计](#4-state-schema-设计)
-5. [Graph 节点与边定义](#5-graph-节点与边定义)
-6. [与现有系统的兼容策略](#6-与现有系统的兼容策略)
-7. [分阶段改造路径](#7-分阶段改造路径)
-8. [依赖变更](#8-依赖变更)
-9. [测试策略](#9-测试策略)
-10. [风险与缓解](#10-风险与缓解)
-11. [明确不做的事](#11-明确不做的事)
-12. [术语表](#12-术语表)
+2. [产品演进路线](#2-产品演进路线)
+3. [技术选型结论](#3-技术选型结论)
+4. [架构总览：当前 vs 改造后](#4-架构总览当前-vs-改造后)
+5. [State Schema 设计](#5-state-schema-设计)
+6. [Graph 节点与边定义](#6-graph-节点与边定义)
+7. [与现有系统的兼容策略](#7-与现有系统的兼容策略)
+8. [分阶段改造路径](#8-分阶段改造路径)
+9. [依赖变更](#9-依赖变更)
+10. [测试策略](#10-测试策略)
+11. [风险与缓解](#11-风险与缓解)
+12. [明确不做的事](#12-明确不做的事)
+13. [术语表](#13-术语表)
 
 ---
 
@@ -45,7 +46,132 @@
 
 ---
 
-## 2. 技术选型结论
+## 2. 产品演进路线
+
+本节是整个产品迭代的战略锚点。LangGraph 改造不是孤立事件，而是产品路线图中**编排层升级**这一环，它向下承接已完成的基础能力，向上为后续产品功能解锁技术前提。
+
+### 2.1 产品阶段树（更新版）
+
+```
+Phase 1（MVP 文字聊天）                    ✅ 已完成
+  ├── Phase 2（Markdown 渲染）              ✅ 已完成
+  ├── Phase 3（对话记忆持久化）              ✅ 已完成
+  │
+  ├── 编排层：LangGraph 改造               ← ★ 本次设计
+  │     ├── 迁移 Phase 0（LangChain 原语替换）
+  │     ├── 迁移 Phase 1（最简 StateGraph）
+  │     ├── 迁移 Phase 2（条件边 + 并行）
+  │     ├── 迁移 Phase 3（图内工具循环）
+  │     └── 迁移 Phase 4（Streaming 技术验证）── 为产品 Phase 4 铺路
+  │
+  ├── Phase 4（Streaming 响应）             ← 依赖 LangGraph 改造完成
+  │     └── Phase 5（TTS 语音）
+  │           └── Phase 6（数字人 / 多模态）
+  │
+  └── 产品化升级路径（正交，按需推进）
+        ├── PostgreSQL 替代 SQLite
+        ├── Redis 缓存层（可选）
+        └── 用户认证 + 多租户
+```
+
+### 2.2 阶段之间的依赖关系
+
+```
+                 ┌────────────────┐
+                 │ Phase 1 (MVP)  │
+                 └───────┬────────┘
+           ┌─────────────┼─────────────┐
+           ▼             ▼             ▼
+    ┌────────────┐ ┌──────────┐ ┌────────────┐
+    │ Phase 2    │ │ Phase 3  │ │ 产品化路径  │
+    │ Markdown   │ │ 持久化    │ │ PG/Redis   │
+    │ ✅ 已完成   │ │ ✅ 已完成  │ │ (按需推进)  │
+    └────────────┘ └──────────┘ └────────────┘
+                       │
+                       ▼  (持久化是编排层改造的前提：双轨存储已就位)
+              ┌─────────────────┐
+              │ LangGraph 改造   │ ← ★ 当前
+              │ (迁移 Phase 0-4) │
+              └────────┬────────┘
+                       │
+                       ▼  (graph.stream() 是 Streaming 的技术基础)
+              ┌─────────────────┐
+              │ Phase 4         │
+              │ Streaming 响应   │
+              └────────┬────────┘
+                       │
+                       ▼  (流式文本是语音合成的输入)
+              ┌─────────────────┐
+              │ Phase 5         │
+              │ TTS 语音        │
+              └────────┬────────┘
+                       │
+                       ▼  (语音 + 流式是数字人的基础)
+              ┌─────────────────┐
+              │ Phase 6         │
+              │ 数字人 / 多模态  │
+              └─────────────────┘
+```
+
+### 2.3 LangGraph 改造在路线图中的定位
+
+**向下承接（已完成的前提）：**
+
+| 已完成阶段 | 为 LangGraph 改造提供的基础 |
+|---|---|
+| Phase 1（MVP） | Agent 核心逻辑（分类、CoT、工具、RAG）已验证可用 |
+| Phase 2（Markdown） | 前端渲染层独立，改造编排层不影响展示 |
+| Phase 3（持久化） | 双轨存储 + Repository 模式已就位，编排层与数据层解耦 |
+
+**向上解锁（后续产品能力）：**
+
+| 后续阶段 | LangGraph 改造提供的支撑 |
+|---|---|
+| Phase 4（Streaming） | `graph.stream()` / `graph.streamEvents()` 提供节点级、token 级事件流 |
+| Phase 5（TTS） | 流式文本输出是语音合成的前提；图节点可插入 TTS 处理节点 |
+| Phase 6（数字人） | 多模态输出需要多 Agent / 子图编排，LangGraph 原生支持 |
+| 多 Agent 架构 | 未来可将 VOCABULARY / GRAMMAR / EXPRESSION 拆为子图，各自独立演进 |
+
+### 2.4 产品化升级路径（与编排层正交）
+
+以下路径**不依赖** LangGraph 改造，可独立按需推进：
+
+```
+当前状态: SQLite 单文件，单用户，后端唯一会话
+    │
+    ├── PostgreSQL 替代 SQLite
+    │   └── 改动范围：仅 src/db/ 内的 3 个文件
+    │       - database.ts: better-sqlite3 → pg + 连接池
+    │       - session-repo.ts: 同步 → async，SQL 微调
+    │       - message-repo.ts: 同步 → async，SQL 微调
+    │   └── LangGraph 改造后编排层不受影响（graph 不直接操作 DB）
+    │
+    ├── Redis 缓存层（可选）
+    │   └── 热 session 缓存，叠加在 PostgreSQL 之上
+    │
+    └── 用户认证 + 多租户
+        └── sessions / messages 表加 user_id
+        └── session-manager 从单例改为按 user_id 查找
+        └── graph.invoke() 的调用方传入对应用户的 session 即可
+```
+
+**关键架构约束**：LangGraph 改造后，`graph.invoke()` 不持有任何数据库连接或 session 单例——它只是一个纯函数式的图执行，输入 State、输出 State。这保证了编排层与产品化路径（存储、多租户）的**完全正交**。
+
+### 2.5 路线图更新原则
+
+当本 spec 的演进路线与以下文档存在版本差异时，**以本文为准**（因为本文是最新的全局更新）：
+- `docs/superpowers/specs/2026-03-31-conversation-persistence-design.md` §9
+- `docs/guides/2026-04-06-phase2-phase3-architecture-perspective.md` §5.1
+
+主要变更点：
+- 原路线图中的「后端：LangChain 改造」→ 更新为「编排层：LangGraph 改造」（含 LangChain 原语）
+- 新增 LangGraph 改造的 5 个迁移子阶段（迁移 Phase 0-4）
+- Phase 3（对话持久化）标记为 ✅ 已完成
+- 明确 Phase 4（Streaming）依赖 LangGraph 改造完成
+
+---
+
+## 3. 技术选型结论
 
 ### 2.1 选择：LangGraph StateGraph + LangChain 原语
 
@@ -75,9 +201,9 @@
 
 ---
 
-## 3. 架构总览：当前 vs 改造后
+## 4. 架构总览：当前 vs 改造后
 
-### 3.1 当前架构（手工编排）
+### 4.1 当前架构（手工编排）
 
 控制流集中在 `chat-service.ts` 的 `chat()` 函数：
 
@@ -95,7 +221,7 @@ chat(session, userMessage)
 
 **特点：** 编排逻辑、状态变更、LLM 调用混在同一函数体内。加新场景/工具需要改动函数内部。
 
-### 3.2 改造后架构（LangGraph StateGraph）
+### 4.2 改造后架构（LangGraph StateGraph）
 
 ```
                          ┌─────────────┐
@@ -123,7 +249,7 @@ const result = await chat(session, userMessage);
 const result = await graph.invoke({ userMessage, history, summary });
 ```
 
-### 3.3 改造边界
+### 4.3 改造边界
 
 **改造的是编排层**（`chat-service.ts`），**不动数据层**（`db/`、`session-manager`）也**不动表现层**（`web/`）。
 
@@ -146,9 +272,9 @@ const result = await graph.invoke({ userMessage, history, summary });
 
 ---
 
-## 4. State Schema 设计
+## 5. State Schema 设计
 
-### 4.1 图状态定义
+### 5.1 图状态定义
 
 ```typescript
 import { Annotation } from "@langchain/langgraph";
@@ -185,13 +311,13 @@ export const TutorState = Annotation.Root({
 });
 ```
 
-### 4.2 设计原则
+### 5.2 设计原则
 
 - **State 只放图内传递数据**：SQLite 持久化仍由路由层负责，不混入图状态。
 - **reducer 用于累积型字段**：`messages` 字段使用 reducer，支持工具循环中的消息追加。
 - **输入/输出分离**：调用方只需填 `userMessage` / `history` / `summary`，从结果中取 `reply` / `scenario`。
 
-### 4.3 与现有 Session 的关系
+### 5.3 与现有 Session 的关系
 
 ```
 现有 Session {id, summary, history}
@@ -204,9 +330,9 @@ export const TutorState = Annotation.Root({
 
 ---
 
-## 5. Graph 节点与边定义
+## 6. Graph 节点与边定义
 
-### 5.1 节点清单
+### 6.1 节点清单
 
 | 节点名 | 对应现有代码 | 输入（从 State 读） | 输出（写入 State） | LLM 调用 |
 |--------|-------------|-------------------|-------------------|----------|
@@ -217,7 +343,7 @@ export const TutorState = Annotation.Root({
 | `executeTools` | `runToolLoop` 中的 tool_calls 处理 | `messages`（最后一条的 tool_calls） | `messages`（追加 tool 结果）、`toolIterations`（+1） | 0 次（API 调用，非 LLM） |
 | `respond` | `chat()` 末尾的 return | `messages`, `scenario` | `reply` | 0 次 |
 
-### 5.2 边定义
+### 6.2 边定义
 
 ```typescript
 const workflow = new StateGraph(TutorState)
@@ -256,7 +382,7 @@ const workflow = new StateGraph(TutorState)
   .addEdge("respond", "__end__");
 ```
 
-### 5.3 条件路由函数
+### 6.3 条件路由函数
 
 **callLLM 的出边路由**：决定是进入工具执行还是直接回复。
 
@@ -270,7 +396,7 @@ function routeAfterLLM(state: typeof TutorState.State): "executeTools" | "respon
 }
 ```
 
-**executeTools 的出边路由**：决定是继续循环还是因达上限而终止（详见 §7 Phase 3）。
+**executeTools 的出边路由**：决定是继续循环还是因达上限而终止（详见 §8 迁移 Phase 3）。
 
 ```typescript
 function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" {
@@ -283,7 +409,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 **边界情况**：当因 `toolIterations` 达上限而强制路由到 `respond` 时，最后一条消息可能是 tool 结果而非文本回复。`respond` 节点应处理此情况——从 messages 中提取最后一条包含文本内容的 AI 消息，若无则返回一个兜底提示（如「抱歉，我暂时无法完成查询，请稍后再试」）。
 
-### 5.4 节点实现要点
+### 6.4 节点实现要点
 
 **classify 节点**：内部逻辑与现有 `classifier.ts` 基本一致，用 `ChatOpenAI` 替代直接 SDK 调用。
 
@@ -312,9 +438,9 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 ---
 
-## 6. 与现有系统的兼容策略
+## 7. 与现有系统的兼容策略
 
-### 6.1 LLM 提供商：Moonshot
+### 7.1 LLM 提供商：Moonshot
 
 当前通过 OpenAI SDK + 自定义 `baseURL` 连接 Moonshot。改造后：
 
@@ -342,20 +468,20 @@ const summaryModel = chatModel.bind({
 
 若此方式不可行，可创建轻量 wrapper 或在该节点内继续使用原始 OpenAI SDK。
 
-### 6.2 Embedding：SiliconFlow
+### 7.2 Embedding：SiliconFlow
 
 当前 `rag/embedding.ts` 直接调用 SiliconFlow API。两种策略：
 
 - **Phase 0 保守策略（推荐）**：保留 `embedding.ts` 原样，`chroma-store.ts` 不变。图内 `buildPrompt` 节点直接调用现有 `retrieveFromChroma()`。
 - **后续可选**：将 SiliconFlow 封装为 LangChain `Embeddings` 子类，统一到框架体系。
 
-### 6.3 Chroma 向量库
+### 7.3 Chroma 向量库
 
 保留现有 `chromadb` 直接客户端。`chroma-store.ts` 的 `retrieveFromChroma()` 和 `initChromaRag()` 接口不变。
 
 不引入 `@langchain/community` 的 Chroma 集成，避免增加不必要的依赖和迁移面。
 
-### 6.4 SQLite 持久化
+### 7.4 SQLite 持久化
 
 **完全不变**。路由层调用方式从：
 
@@ -388,7 +514,7 @@ session.history.push(
 
 **注意**：现有 `chat()` 在工具循环结束后有两次 `session.history.push`（用户消息 + assistant 回复）。改造后这一步移到路由层，确保 session 写入 DB 时包含完整的本轮对话。
 
-### 6.5 消息格式转换
+### 7.5 消息格式转换
 
 现有代码使用 OpenAI SDK 的 `ChatCompletionMessageParam`，LangGraph 使用 LangChain 的 `BaseMessage`。需要在路由层做转换：
 
@@ -401,7 +527,7 @@ function fromBaseMessage(msg: BaseMessage): ChatCompletionMessageParam { ... }
 
 ---
 
-## 7. 分阶段改造路径
+## 8. 分阶段改造路径
 
 每个阶段独立可交付、可测试。每个阶段完成后系统应完全可用。
 
@@ -630,9 +756,9 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 ---
 
-## 8. 依赖变更
+## 9. 依赖变更
 
-### 8.1 新增依赖
+### 9.1 新增依赖
 
 | 包 | 引入阶段 | 用途 |
 |----|---------|------|
@@ -641,7 +767,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 | `zod` | Phase 0 | 工具参数 schema 定义 |
 | `@langchain/langgraph` | Phase 1 | StateGraph、Annotation、编译和执行 |
 
-### 8.2 保留的依赖
+### 9.2 保留的依赖
 
 | 包 | 说明 |
 |----|------|
@@ -649,7 +775,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 | `better-sqlite3` | 持久化层不变 |
 | `chromadb` | RAG 直接使用，不引入 LangChain Chroma 集成 |
 
-### 8.3 可移除的依赖（Phase 3 完成后）
+### 9.3 可移除的依赖（迁移 Phase 3 完成后）
 
 | 包 | 说明 |
 |----|------|
@@ -657,15 +783,15 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 ---
 
-## 9. 测试策略
+## 10. 测试策略
 
-### 9.1 原则
+### 10.1 原则
 
 - **每个 Phase 完成后，现有测试必须全部通过**。
 - 现有测试覆盖的是行为（API 层面），不依赖内部实现。编排层改造不应破坏这些测试。
 - 新增测试聚焦**图级行为**，不测节点内部实现。
 
-### 9.2 各阶段测试重点
+### 10.2 各阶段测试重点
 
 | 阶段 | 测试重点 |
 |------|---------|
@@ -675,7 +801,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 | Phase 3 | 工具循环能正确终止（有工具、无工具、达到上限三种情况）；循环中 messages 正确累积 |
 | Phase 4 | streaming 验证脚本运行成功 |
 
-### 9.3 回归验证
+### 10.3 回归验证
 
 每个 Phase 完成后的手动验证清单：
 
@@ -688,7 +814,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 ---
 
-## 10. 风险与缓解
+## 11. 风险与缓解
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|---------|
@@ -700,7 +826,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 ---
 
-## 11. 明确不做的事
+## 12. 明确不做的事
 
 | 事项 | 为什么不做 |
 |------|-----------|
@@ -715,7 +841,7 @@ function routeAfterTools(state: typeof TutorState.State): "callLLM" | "respond" 
 
 ---
 
-## 12. 术语表
+## 13. 术语表
 
 | 术语 | 含义（本项目语境） |
 |------|----------------|
