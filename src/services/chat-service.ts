@@ -33,7 +33,12 @@ import { grammarCot, grammarFewShot } from '@/prompts/grammar';
 import { expressionCot, expressionFewShot } from '@/prompts/expression';
 import { offTopicCot } from '@/prompts/offTopic';
 import { formatRagContext } from '@/prompts/rag';
-import { initChromaRag, retrieveFromChroma } from '@/rag/chroma-store';
+import {
+  initChromaRag,
+  isChromaReady,
+  retrieveFromChroma,
+  setChromaReadyState,
+} from '@/rag/chroma-store';
 import { dictionaryTool } from '@/tools/dictionary';
 import {
   CHAT_MODEL,
@@ -61,8 +66,6 @@ const scenarioConfig: Record<
   OFF_TOPIC: { cot: offTopicCot, fewShot: [] },
 };
 
-/** Chroma RAG 是否已初始化（undefined = 未尝试，true/false = 结果） */
-let chromaReady: boolean | undefined;
 let chromaInitPromise: Promise<void> | undefined;
 
 /**
@@ -74,7 +77,7 @@ export async function preloadRagKnowledge(): Promise<void> {
   if (!chromaInitPromise) {
     chromaInitPromise = initChromaRag()
       .then((ok) => {
-        chromaReady = ok;
+        setChromaReadyState(ok);
         console.log(
           ok
             ? '  [RAG] Chroma 已就绪'
@@ -82,7 +85,7 @@ export async function preloadRagKnowledge(): Promise<void> {
         );
       })
       .catch((err) => {
-        chromaReady = false;
+        setChromaReadyState(false);
         console.warn('  [RAG] Chroma 连接异常，本次不使用 RAG:', err);
       });
   }
@@ -199,7 +202,7 @@ async function buildSystemPrompt(
     systemPrompt += `\n\n[历史摘要] ${summary}`;
   }
 
-  if (scenario !== 'OFF_TOPIC' && chromaReady) {
+  if (scenario !== 'OFF_TOPIC' && isChromaReady()) {
     try {
       const top = (await retrieveFromChroma(userMessage, RAG_TOP_K)).filter(
         (t) => t.score >= RAG_MIN_SCORE

@@ -16,6 +16,19 @@ const COLLECTION_NAME = 'english-tutor-knowledge';
 // initChromaRag() 成功后缓存，避免 retrieveFromChroma() 重复建连
 let cachedCollection: Collection | null = null;
 
+/** Chroma RAG 是否已初始化（undefined = 未尝试，true/false = 结果） */
+let chromaReady: boolean | undefined;
+
+/** 由 preload 在 initChromaRag settle 后写入，与知识库模块状态一致 */
+export function setChromaReadyState(ok: boolean | undefined): void {
+  chromaReady = ok;
+}
+
+/** 供图节点等查询 Chroma 是否已初始化就绪 */
+export function isChromaReady(): boolean {
+  return chromaReady === true;
+}
+
 /** 占位用的 embedding function，让 SDK 跳过 DefaultEmbeddingFunction 的初始化警告。
  *  实际向量始终由调用方手动传入（upsert/query 都带显式 embeddings），此函数不会被调用。
  */
