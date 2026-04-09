@@ -1,6 +1,6 @@
 import { Annotation } from '@langchain/langgraph';
 import type { BaseMessage } from '@langchain/core/messages';
-import type { Scenario } from '../classifier.js';
+import type { Scenario } from '@/classifier';
 
 /**
  * 图的全局状态定义。
