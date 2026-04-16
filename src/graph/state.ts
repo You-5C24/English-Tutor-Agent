@@ -26,6 +26,11 @@ export const TutorState = Annotation.Root({
     default: () => [],
   }),
 
+  toolIterations: Annotation<number>({
+    reducer: (_current, update) => update,
+    default: () => 0,
+  }),
+
   reply: Annotation<string>,
 });
 
