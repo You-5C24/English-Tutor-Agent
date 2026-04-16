@@ -7,10 +7,13 @@ import { callLLMNode } from './nodes/call-llm.js';
 import { respondNode } from './nodes/respond.js';
 
 /**
- * Phase 1：线性编排，与旧版 chat() 顺序一致。
- * classify → compress → buildPrompt → callLLM → respond
+ * Phase 2：并行 fan-out (classify + compress) → fan-in (buildPrompt)。
  *
- * 使用 SDK 提供的 START / END 常量，等价于 "__start__" / "__end__"，便于类型提示与后续升级。
+ * START ──→ classify  ──→ buildPrompt ──→ callLLM ──→ respond ──→ END
+ * START ──→ compress  ──→ buildPrompt
+ *
+ * classify 写 scenario，compress 写 compressedHistory/compressedSummary，
+ * 两者写不同字段，不冲突。buildPrompt 在两者都完成后才执行。
  */
 const workflow = new StateGraph(TutorState)
   .addNode('classify', classifyNode)
@@ -18,9 +21,13 @@ const workflow = new StateGraph(TutorState)
   .addNode('buildPrompt', buildPromptNode)
   .addNode('callLLM', callLLMNode)
   .addNode('respond', respondNode)
+  // 并行 fan-out
   .addEdge(START, 'classify')
-  .addEdge('classify', 'compress')
+  .addEdge(START, 'compress')
+  // fan-in：两者都完成后才进入 buildPrompt
+  .addEdge('classify', 'buildPrompt')
   .addEdge('compress', 'buildPrompt')
+  // 线性
   .addEdge('buildPrompt', 'callLLM')
   .addEdge('callLLM', 'respond')
   .addEdge('respond', END);
