@@ -164,7 +164,8 @@ flowchart LR
 | `on_chain_end`（节点 `classify`） | `meta` | classify 结束后一次 |
 | `on_chat_model_stream`（非空 `chunk.content`） | `token` | callLLM 每 chunk；工具循环期间也属于同一条助手消息 |
 | 异步迭代正常结束后 | `done` | 事务入库**之后** |
-| 异步迭代抛非 `AbortError` | `error` | 不入库 |
+| 异步迭代抛非 `AbortError` | `error`（`LLM_ERROR` / `TOOL_ERROR` / `INTERNAL`，按抛出位置分类） | 不入库 |
+| 图迭代正常结束但事务抛 | `error`（`PERSIST_ERROR`） | 不入库；与中途失败同一出口，不会走 `done` |
 | `signal.aborted === true` | — | 不 yield；迭代静默结束，不入库 |
 
 ---
@@ -220,8 +221,10 @@ flowchart TB
 ### 5.2 契约
 
 - **服务层对路由层的契约**：一个 `AsyncIterable<StreamEvent>`，按 §4.4 不变量 yield。
-- **服务层对持久化的契约**：与现 `chat()` 相同——**成功一次 `runTransaction`**；失败/中止**不写任何行**。
+- **服务层对持久化的契约**：与现 `chat()` 语义等价——**成功一次 `runTransaction`**；失败/中止**不写任何行**。
 - **路由层对服务层的契约**：在生成器迭代开始前完成 SSE 握手；在 `request.raw` 断开时调用传入的 `AbortController.abort()`。
+
+> **与现状的位置差异（非语义差异）**：当前 `POST /chat` 的 `runTransaction` 位于路由层，`chat()` 只变更 `session` 字段。Phase 4 把流式路径的事务边界下移到服务层 `chatStream()` 内部，以便"成功入库 → 发 `done`"与"失败 → 发 `error`、不入库"两条路径都能在同一个 async generator 中原子地闭合。事务**内容**（`session.save()` + 两条 `addMessage`）和**不变量**（全部成功或全部不写）与现有 JSON 路径一致。
 
 ---
 
@@ -299,6 +302,8 @@ stateDiagram-v2
 2. DB 的"完整回合"不变量在 UI 层镜像呈现。
 3. 成功 / 失败 / 中止的 UI 清理逻辑都由 hook 驱动，组件无需感知。
 
+> **abort 时的输入框行为**：本轮 user 消息虽然从消息列表移除，但其原始文本**不回填**到输入框。用户点"停止"表达的是"放弃这条提问"，不是"改一改再发"；回填会暗示可编辑重发，与当下的产品语义冲突。若未来增加"重试"能力，可通过独立按钮承载，不由 abort 触发——此处明确划出范围。
+
 ### 6.4 `isStreaming` 与输入体验
 
 - 现有 `isLoading` 升级为 `isStreaming`（语义相同：从 `sendMessage` 起到 `done/error/abort` 止）。
@@ -312,7 +317,9 @@ stateDiagram-v2
 | 错误类别 | 触发来源 | 协议表现 | 持久化 | UI 表现 |
 |---|---|---|---|---|
 | 合法中止 | 用户点停止 / 网络断 | 连接关闭，无终态帧 | 不入库 | 移除流式气泡 + 本轮 user 消息；transient "已停止" 2s |
-| 输入校验失败 | 请求体 schema 拒绝 | **不进入流式**，返回 **400 JSON** | 不入库 | 与现有 `/chat` 校验错误一致 |
+| 输入校验失败 | 请求体 schema 拒绝 | **不进入流式**，返回 **400 JSON**（`Content-Type: application/json`） | 不入库 | 与现有 `/chat` 校验错误一致 |
+
+> **前端协议契约**：流式 API 客户端在开始 SSE 帧解析之前，必须先检查响应的 HTTP 状态码与 `Content-Type`。非 200 或非 `text/event-stream` 的响应按 JSON 错误处理（沿用 `ChatApiError` 语义），不进入帧解析分支。
 | 上游 LLM 错误 | 图运行中抛 | `event: error`（`code: LLM_ERROR`） | 不入库 | 保留 user，显示错误，状态进 `error` |
 | 工具执行错误 | `executeTools` 节点抛 | `event: error`（`code: TOOL_ERROR`） | 不入库 | 同上 |
 | 内部异常 | service 层 bug | `event: error`（`code: INTERNAL`） | 不入库 | 同上 |
@@ -361,7 +368,7 @@ stateDiagram-v2
 Phase 4 可对外宣布完成的必要条件：
 
 - [ ] 默认 UI 体验：发送消息后 < 1s 看到首个 token；打字机效果无卡顿。
-- [ ] Scenario 徽章在首个 token 之前 / 同时出现。
+- [ ] Scenario 徽章**严格早于首个 token 出现**（与 §4.4 不变量"`meta` 必在所有 `token` 之前"一致）。
 - [ ] 停止按钮在流式期间可见；点击后 UI 本轮清空、后端日志观察到 abort、DB 无新行。
 - [ ] 刷新页面从 `/history` 加载，中止的回合完全不出现；成功的回合与非流式一致。
 - [ ] JSON 降级：设 `VITE_STREAMING=false` 后，行为与当前 `main` 完全一致（已有测试全绿）。
