@@ -21,6 +21,7 @@
 | `src/services/__tests__/sse-protocol.test.ts` | Create | 纯函数测试（帧格式、特殊字符转义、不变量） |
 | `src/services/chat-stream-service.ts` | Create | `chatStream()` async generator：事件映射 + 持久化 + abort / error 分类 |
 | `src/services/__tests__/chat-stream-service.test.ts` | Create | 4 大场景：happy path / abort / LLM 错误 / 持久化错误 |
+| `src/db/__tests__/test-helpers.ts` | Create | 抽取 `initTestDb()` 供 service 层测试复用（沿用 message-repo.test.ts 的 in-memory + closeDb 模式） |
 | `src/routes/chat.ts` | Modify | 新增 `POST /chat/stream` 路由（SSE 握手 + `request.raw` close 透传 abort）；`POST /chat` 不动 |
 | `src/routes/__tests__/chat-stream.test.ts` | Create | 路由集成：`fastify.inject` 读 SSE 响应 + 断言 DB 行 |
 | `web/src/types/chat.ts` | Modify | 新增 `StreamEvent` 类型、`StreamCallbacks` 接口 |
@@ -241,8 +242,27 @@ git commit -m "feat(streaming): add SSE protocol types and serializer"
 **Files:**
 - Create: `src/services/chat-stream-service.ts`
 - Create: `src/services/__tests__/chat-stream-service.test.ts`
+- Create: `src/db/__tests__/test-helpers.ts`（见 Step 1）
 
-> **Mock 策略提示**：测试通过 `vi.mock('@/llm/model')` 和 `vi.mock('@/graph/index')` 替换底层，避免真跑 LLM。`chatStream()` 订阅的是 `tutorGraph.streamEvents(...)`，因此把 `tutorGraph` mock 成一个暴露 `streamEvents` 的对象即可。DB 使用 in-memory SQLite（现有测试已有相似模式，参见 `src/db/__tests__/message-repo.test.ts`）。
+> **Mock 策略（临时）**：Task 3–6 当前采用"**上层 mock**"——通过 `vi.mock('@/graph/index')` 把 `tutorGraph` 整体替换为可控的 async generator。这样测试自给自足，但 **绕过了真实 LangGraph 事件流**，无法覆盖 spec §4.5 的事件映射真实形状。
+>
+> **⚠️ 遗留动作（Task 1 spike 完成后必须回查）**：
+> spec §2/§8.2 的关键决策是 `vi.mock('@/llm/model')`——这意味着 Task 3–6 的"最终形态"应该在保留真实 `tutorGraph` 的前提下，只替换底层 `chatModel.invoke / chatModel.stream`。
+>
+> 本 plan 选择先用上层 mock 快速跑通骨架，**待 Task 1 的 `notes.md` 落地、真实事件 shape 被确认后**，由后续独立 commit 做一次"mock 下沉"：把 Task 3–6 的测试 mock 改为 `vi.mock('@/llm/model')` + 真实 `tutorGraph.streamEvents`。本 plan **不在当前修订内**完成这一步，但 **Task 15 的回归验证必须显式检查**：
+> - [ ] TODO（post-Task 1）：记录 mock 下沉的跟进 issue / PR，或在本文件末尾追加 Task 16
+>
+> **DB**：使用 in-memory SQLite，复用 `src/db/__tests__/test-helpers.ts` 的 `initTestDb()`（在本 Task Step 1 创建）。
+
+- [ ] **Step 0: 与 Task 1 notes 对齐 fake 事件 shape（阻塞性前置）**
+
+本 Task 后续所有 fake 事件的 shape（`{ event: 'on_chain_end', name: 'classify', data: { output: { scenario: ... } } }` 等）是**基于作者的合理假设**。进入 Step 1 前先打开 `docs/superpowers/plans/2026-04-17-streaming-response-notes.md`，逐项核对：
+
+- 若 `classify` 的 `on_chain_end.data.output` 实际是 `{ scenario: 'VOCABULARY' }`：**保持当前 fake 事件不变**。
+- 若实际 shape 不同（例如是 `{ classify: { scenario: ... } }` 或整个 state 快照）：**先同步修改 Step 1 的 fake 事件 + Step 3 chatStream 实现里对应的 if 分支 + 字段抽取逻辑**，再进入 Step 1。
+- 若 Task 1 发现图根本不发 `on_chain_end` / 字段缺失：**停止并回到 PLAN 模式调整策略**（可能需要改为并行订阅 `stream("values")` 兜底，详见 spec §10）。
+
+其它节点（`compress` / `respond`）同样核对。此 Step 无需代码改动，仅需在 notes 中勾选"shape 已对齐"。
 
 - [ ] **Step 1: 写失败测试：happy path 产生正确的 StreamEvent 序列 + DB 落两行**
 
@@ -253,25 +273,42 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { StreamEvent } from '@/services/sse-protocol';
 import { initTestDb } from '@/db/__tests__/test-helpers'; // 若无则临时 inline
 
-// 用一个可配置的伪事件流替换 tutorGraph
-const fakeEvents: unknown[] = [];
+// 用一个可配置的伪事件流替换 tutorGraph。
+// ⚠️ vi.mock 被 Vitest hoist 到文件顶部，工厂函数闭包若直接引用模块级 let/const 会触发
+//     ReferenceError（TDZ）。必须用 vi.hoisted 让变量同样 hoist。
+const { fakeEvents } = vi.hoisted(() => ({ fakeEvents: [] as unknown[] }));
+
 vi.mock('@/graph/index', () => ({
   tutorGraph: {
-    streamEvents: vi.fn(() => (async function* () {
-      for (const e of fakeEvents) yield e;
-    })()),
+    streamEvents: vi.fn((_input: unknown, opts: { signal?: AbortSignal } = {}) =>
+      (async function* () {
+        for (const e of fakeEvents) {
+          if (opts.signal?.aborted) {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          yield e;
+        }
+      })()
+    ),
   },
 }));
 
 import { chatStream } from '@/services/chat-stream-service';
 import * as messageRepo from '@/db/message-repo';
 import * as sessionManager from '@/services/session-manager';
+import { initTestDb, closeDb } from '@/db/__tests__/test-helpers';
 
 beforeEach(() => {
   fakeEvents.length = 0;
   initTestDb();                  // 清表 + schema
   sessionManager.clearDefaultSession();
   sessionManager.initDefaultSession();
+});
+
+afterEach(() => {
+  closeDb();
 });
 
 async function collect(iter: AsyncIterable<StreamEvent>): Promise<StreamEvent[]> {
@@ -282,13 +319,14 @@ async function collect(iter: AsyncIterable<StreamEvent>): Promise<StreamEvent[]>
 
 describe('chatStream — happy path', () => {
   it('emits meta → tokens → done and persists user + assistant rows', async () => {
+    // 注：chatStream 实现只消费 classify / compress / respond 的 on_chain_end；
+    //    根图的 on_chain_end 当前不参与字段收集，因此不在 fakeEvents 中构造。
     fakeEvents.push(
       { event: 'on_chain_end', name: 'classify', data: { output: { scenario: 'VOCABULARY' } } },
       { event: 'on_chat_model_stream', data: { chunk: { content: 'Hel' } } },
       { event: 'on_chat_model_stream', data: { chunk: { content: 'lo' } } },
       { event: 'on_chain_end', name: 'compress', data: { output: { compressedHistory: [], compressedSummary: '' } } },
       { event: 'on_chain_end', name: 'respond', data: { output: { reply: 'Hello' } } },
-      { event: 'on_chain_end', name: 'LangGraph', data: { output: { reply: 'Hello', scenario: 'VOCABULARY' } } },
     );
 
     const session = sessionManager.getDefaultSession();
@@ -309,7 +347,25 @@ describe('chatStream — happy path', () => {
 });
 ```
 
-> 若 `src/db/__tests__/` 下没有可复用的 `initTestDb()` 工具，在 Step 1 一并新建 `src/db/__tests__/test-helpers.ts` 基于现有 `message-repo.test.ts` 的建表脚本抽出一个 `initTestDb()`（参考既有写法）。
+**同步创建 `src/db/__tests__/test-helpers.ts`**（File Map 已列出；内容固定）：
+
+```ts
+import { initDb, closeDb } from '@/db/database';
+
+/**
+ * 为 service 层测试准备一份干净的 in-memory DB；调用方应在 afterEach/afterAll 中 closeDb()。
+ * 与 `src/db/__tests__/message-repo.test.ts` 的 initDb(':memory:') 语义完全一致，
+ * 抽出成帮助函数只是为了复用。
+ */
+export function initTestDb(): void {
+  closeDb();           // 若上一用例未关，先关；幂等
+  initDb(':memory:');
+}
+
+export { closeDb };
+```
+
+测试文件在 `beforeEach` 调 `initTestDb()`、`afterEach` 调 `closeDb()` 即可。
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -325,6 +381,7 @@ Expected: FAIL，`chatStream` 未导出。
 
 ```ts
 import { randomUUID } from 'node:crypto';
+import type { BaseMessage } from '@langchain/core/messages';
 import { tutorGraph } from '@/graph/index';
 import { sessionHistoryToBaseMessages, baseMessagesToSessionHistory } from '@/graph/adapters';
 import { runTransaction } from '@/db/database';
@@ -403,27 +460,30 @@ export async function* chatStream(
     }
   }
 
-  // 若图抛错会在上面 for 循环里冒出，由 Task 6 的 try/catch 处理；到此处一定是正常完成
-  session.history = baseMessagesToSessionHistory((collected.compressedHistory ?? []) as never);
+  // 图正常跑完后到达此处；异常路径由 Task 5 (LLM_ERROR) / Task 6 (PERSIST_ERROR) 处理。
+  session.history = baseMessagesToSessionHistory(
+    (collected.compressedHistory ?? []) as BaseMessage[]
+  );
   session.summary = collected.compressedSummary ?? '';
   session.history.push(
     { role: 'user', content: userMessage },
     { role: 'assistant', content: collected.reply }
   );
 
-  const messageId = newMessageId();
+  const userMessageId = newMessageId();
+  const assistantMessageId = newMessageId();
   const now = Date.now();
   runTransaction(() => {
     sessionManager.save();
     messageRepo.addMessage({
-      id: newMessageId(),
+      id: userMessageId,
       role: 'user',
       content: userMessage,
       scenario: null,
       timestamp: now - 1,
     });
     messageRepo.addMessage({
-      id: messageId,
+      id: assistantMessageId,
       role: 'assistant',
       content: collected.reply,
       scenario: collected.scenario ?? null,
@@ -433,7 +493,7 @@ export async function* chatStream(
 
   yield {
     type: 'done',
-    messageId,
+    messageId: assistantMessageId,
     scenario: (collected.scenario ?? 'OFF_TOPIC') as Scenario,
     replyLength: collected.reply.length,
   };
@@ -473,30 +533,10 @@ git commit -m "feat(streaming): add chatStream service with happy path + persist
 describe('chatStream — abort', () => {
   it('stops silently and does not persist when signal aborts mid-stream', async () => {
     let aborted = false;
+    // 默认 mock 工厂（见 Task 3 Step 1）已按 signal.aborted 抛 AbortError，这里只需投喂事件即可。
     fakeEvents.push(
       { event: 'on_chain_end', name: 'classify', data: { output: { scenario: 'VOCABULARY' } } },
       { event: 'on_chat_model_stream', data: { chunk: { content: 'He' } } }
-    );
-
-    // 让 streamEvents 在 abort 后主动抛 AbortError（真实 LangGraph 行为由 Task 1 spike 确认）
-    vi.mocked((await import('@/graph/index')).tutorGraph.streamEvents).mockImplementationOnce(
-      (_: unknown, opts: { signal: AbortSignal }) =>
-        (async function* () {
-          for (const e of fakeEvents) {
-            if (opts.signal.aborted) {
-              const err = new Error('aborted');
-              err.name = 'AbortError';
-              throw err;
-            }
-            yield e;
-          }
-          while (!opts.signal.aborted) {
-            await new Promise((r) => setTimeout(r, 10));
-          }
-          const err = new Error('aborted');
-          err.name = 'AbortError';
-          throw err;
-        })()
     );
 
     const session = sessionManager.getDefaultSession();
@@ -545,8 +585,10 @@ try {
   }
 } catch (err) {
   const e = err as Error;
-  if (e.name === 'AbortError' || signal.aborted) {
-    return;  // 合法中止：不 yield，不落库
+  // 主判据：我们自己持有的 signal 是否已中止（对底层抛错类型做兼容，不依赖具体错误名）。
+  // 次判据：底层显式声明 AbortError（覆盖 "signal 未被设置、但迭代器内部自行抛 AbortError" 的边缘情况）。
+  if (signal.aborted || e.name === 'AbortError') {
+    return;  // 合法中止：不 yield 终态帧、不落库
   }
   throw err; // 交给 Task 5 的 error 分类
 }
@@ -607,18 +649,31 @@ describe('chatStream — LLM error', () => {
 ```ts
 } catch (err) {
   const e = err as Error;
-  if (e.name === 'AbortError' || signal.aborted) return;
-  // 映射分类：简化版 —— 默认 LLM_ERROR；未来可根据 e.cause / 节点名细化
+  if (signal.aborted || e.name === 'AbortError') return;
+
+  // 分类策略（对齐 spec §7）：
+  // - 图/LLM 运行时抛 → LLM_ERROR（覆盖 TOOL_ERROR 场景，见下方"范围说明"）
+  // - chatStream 自身 bug（极少数：字段访问异常、类型错误）→ INTERNAL
+  // 判据：通过 for-await 冒上来的是 LangGraph 链内的错误；chatStream 外层的同步代码
+  //      尚未执行到此 catch（持久化 catch 在 Task 6 单独处理）。故这里统一认为是 LLM_ERROR。
+  const code: 'LLM_ERROR' | 'INTERNAL' =
+    e.name === 'TypeError' || e.name === 'ReferenceError' ? 'INTERNAL' : 'LLM_ERROR';
+
   yield {
     type: 'error',
-    code: 'LLM_ERROR',
+    code,
     message: e.message ?? 'upstream failure',
   };
   return;
 }
 ```
 
-> **范围注意**：`TOOL_ERROR` / `INTERNAL` 的差异化分类需要 LangGraph 事件携带抛出节点名；spec §7 允许先统一 `LLM_ERROR`，后续如有需要再细分。这里**只实现统一错误分类**，保持任务边界。
+> **范围注意（对齐 spec §7）**：
+> - `LLM_ERROR`：默认分类，覆盖所有从图内冒出的运行时错误（包括实际由 `executeTools` 节点抛出的 `TOOL_ERROR`）。
+> - `INTERNAL`：仅当异常类型明显为 JS 编程错误（`TypeError` / `ReferenceError`）时触发；真实使用中应极为罕见。
+> - `TOOL_ERROR`：**显式推迟**。区分该码需要 LangGraph 事件携带抛出节点名（可通过订阅 `on_chain_error`/`on_tool_error` 事件捕获）。这是一次**对 spec §7 表格的降级**，需同步到 `docs/superpowers/specs/2026-04-17-streaming-response-design.md` §2 "关键决策汇总"表中补一行，或在 §7 表格下加一条脚注："Phase 4 实现层面暂合并 TOOL_ERROR 到 LLM_ERROR，待后续独立迭代拆分"。
+>
+> - [ ] **同步 spec 文档**：Task 5 完成后，更新 spec §7 加入上述脚注并 commit（commit 范围：只改 spec，不含代码）。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -798,15 +853,24 @@ app.post<{ Body: ChatBody }>(
     const controller = new AbortController();
     request.raw.on('close', () => controller.abort());
 
+    // 不变量守护：spec §4.4 "终态二选一，仅 1 次"。若 chatStream 已 yield 过 done/error，
+    // 即使路由层 catch 到异常也不再补发 error 帧，避免双终态。
+    let emittedTerminal = false;
+
     try {
       for await (const evt of chatStream(session, message, controller.signal)) {
+        if (evt.type === 'done' || evt.type === 'error') {
+          emittedTerminal = true;
+        }
         reply.raw.write(serializeSSE(evt));
       }
     } catch (err) {
       request.log.error(err, 'streaming chat route failed');
-      reply.raw.write(
-        serializeSSE({ type: 'error', code: 'INTERNAL', message: 'internal error' })
-      );
+      if (!emittedTerminal && !controller.signal.aborted) {
+        reply.raw.write(
+          serializeSSE({ type: 'error', code: 'INTERNAL', message: 'internal error' })
+        );
+      }
     } finally {
       reply.raw.end();
     }
@@ -877,11 +941,90 @@ describe('POST /api/chat/stream — abort', () => {
 
 > **范围说明**：`fastify.inject` 不模拟真实 socket close；要精确验证 close → abort，可在 Step 2 改为启动真实 server。如果工作量过大，保留"signal 被传入且存活"这一级断言即可，更精细的集成可留给手动验证。
 
-- [ ] **Step 2（可选增强）: 用真实 `app.listen()` + `http.request` 强化一遍**
+- [ ] **Step 2: 用真实 `app.listen()` + `http.request` 断言 abort 真实触发（必做）**
 
-如需更高置信度：起一个 ephemeral 端口的 `app.listen({ port: 0 })`，用 `http.request` 发请求，在收到首个 `event: meta` 后手动 `req.destroy()`，再通过 `process.nextTick` 检查 `AbortController.signal.aborted`。
+`fastify.inject` 无法模拟 socket close，必须起真实端口才能验证 abort 信号的端到端传播。追加一条用例：
 
-- [ ] **Step 3: Commit**
+```ts
+import http from 'node:http';
+
+describe('POST /api/chat/stream — real socket abort', () => {
+  it('propagates abort to chatStream when the client destroys the socket', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const pendingResolvers: Array<() => void> = [];
+    const chatStreamMod = await import('@/services/chat-stream-service');
+
+    vi.mocked(chatStreamMod.chatStream).mockImplementationOnce(
+      (async function* (_session, _msg, signal) {
+        capturedSignal = signal;
+        yield { type: 'meta', scenario: 'VOCABULARY' };
+        // 长时间挂起，等待 signal 触发
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve());
+          pendingResolvers.push(resolve);
+        });
+      }) as typeof chatStreamMod.chatStream
+    );
+
+    const app = buildApp();
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('no port bound');
+    const port = address.port;
+
+    await new Promise<void>((resolveTest, rejectTest) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/chat/stream',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        (res) => {
+          res.on('data', (chunk: Buffer) => {
+            const text = chunk.toString('utf-8');
+            if (text.includes('event: meta')) {
+              // 收到首帧后立即断开 socket
+              req.destroy();
+            }
+          });
+          res.on('error', () => { /* destroy 会导致 res 报错，忽略 */ });
+        }
+      );
+      req.on('error', () => { /* destroy 后 req 报错属预期 */ });
+      req.write(JSON.stringify({ message: 'hi' }));
+      req.end();
+
+      // 给后端 200ms 消化 socket close → AbortController.abort()
+      setTimeout(() => {
+        try {
+          expect(capturedSignal?.aborted).toBe(true);
+          resolveTest();
+        } catch (err) {
+          rejectTest(err);
+        }
+      }, 200);
+    });
+
+    // 清理：确保 pending generator 被释放
+    pendingResolvers.forEach((r) => r());
+    await app.close();
+  });
+});
+```
+
+Expected：`capturedSignal.aborted === true`。
+
+- [ ] **Step 3: 运行测试确认通过**
+
+```bash
+npm run test -- src/routes/__tests__/chat-stream.test.ts
+```
+
+Expected: 两条用例（inject 版 + real-socket 版）全绿。
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/routes/__tests__/chat-stream.test.ts
@@ -914,7 +1057,16 @@ export interface StreamCallbacks {
 
 export interface StreamHandle {
   abort: () => void;
-  /** resolve when stream ends (done / error / abort); never rejects */
+  /**
+   * 流生命周期结束时 resolve（包括 done / stream-level error via onError / user abort）。
+   *
+   * **仅在以下情况 reject**（"pre-stream 协议错"）：
+   * - HTTP 非 200；
+   * - 响应 Content-Type 不是 `text/event-stream`（spec §7 前端协议契约）；
+   * - fetch 本身抛（网络断开、CORS 等），且 `abort()` 未主动触发。
+   *
+   * 流内语义错误（`event: error`）统一通过 `onError` 回调分派，**不**使 `done` reject。
+   */
   done: Promise<void>;
 }
 ```
@@ -1301,7 +1453,13 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Message, StreamCallbacks, StreamHandle } from '../types/chat';
 import { sendChatMessage, streamChatMessage, fetchHistory, resetConversation as apiReset, ChatApiError } from '../api/chat';
 
-const USE_STREAMING = import.meta.env.VITE_STREAMING !== 'false';
+/**
+ * 读取 feature flag。必须在 hook 函数体内每次求值（而非模块顶层常量），
+ * 否则 Vitest 测试在 beforeEach 中修改 `import.meta.env.VITE_STREAMING` 无法生效。
+ */
+function readUseStreamingFlag(): boolean {
+  return import.meta.env.VITE_STREAMING !== 'false';
+}
 
 function newMessageId(): string { /* 保持现状 */ }
 
@@ -1373,14 +1531,47 @@ export function useConversation(): UseConversationReturn {
     });
   }, []);
 
+  // 与当前 `web/src/hooks/useConversation.ts` 中 line 49-85 的 sendMessage 主体等价，
+  // 仅做两处微调：(1) 语义从 isLoading 改为 isStreaming；(2) 入参已为 trimmed，去掉二次 trim。
   const jsonSend = useCallback(async (trimmed: string) => {
-    /* 把现有 sendMessage 的实现原样搬过来，仅把 isLoading 改名为 isStreaming */
+    const userMessage: Message = {
+      id: newMessageId(),
+      role: 'user',
+      content: trimmed,
+      timestamp: Date.now(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setIsStreaming(true);
+    setError(null);
+
+    try {
+      const response = await sendChatMessage({ message: trimmed });
+
+      const assistantMessage: Message = {
+        id: newMessageId(),
+        role: 'assistant',
+        content: response.reply,
+        timestamp: Date.now(),
+        scenario: response.scenario,
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (err) {
+      if (err instanceof ChatApiError) {
+        setError(err.message);
+      } else {
+        setError('网络连接失败，请检查网络后重试');
+      }
+    } finally {
+      setIsStreaming(false);
+    }
   }, []);
 
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
-    return USE_STREAMING ? streamingSend(trimmed) : jsonSend(trimmed);
+    return readUseStreamingFlag() ? streamingSend(trimmed) : jsonSend(trimmed);
   }, [isStreaming, streamingSend, jsonSend]);
 
   const stop = useCallback(() => {
@@ -1405,7 +1596,7 @@ export function useConversation(): UseConversationReturn {
     sendMessage,
     clearError,
     resetConversation: handleReset,
-    stop: USE_STREAMING ? stop : undefined,
+    stop: readUseStreamingFlag() ? stop : undefined,
   };
 }
 ```
@@ -1442,6 +1633,22 @@ interface ChatInputProps {
   onSend: (text: string) => void;
   onStop?: () => void;
 }
+
+/**
+ * 关键 UX 调整（对齐 spec §6.4）：
+ * - textarea 删除 `disabled={isLoading}`：流式中仍可输入下一条；
+ * - 发送/停止按钮二选一渲染；
+ * - `doSend` 在 `isStreaming` 时 **完全 no-op**：不调用 onSend、也不清空输入框
+ *   （避免"按 Enter 清空但消息被 hook 拒绝"造成的内容丢失）。
+ */
+
+const doSend = () => {
+  if (isStreaming) return;                // ← 优先于 onSend；不清空 input
+  const trimmed = input.trim();
+  if (!trimmed) return;
+  onSend(trimmed);
+  setInput('');
+};
 
 // textarea 的 disabled 删掉；按钮根据 isStreaming 切换：
 {isStreaming && onStop ? (
