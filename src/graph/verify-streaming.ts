@@ -65,6 +65,53 @@ async function verifyStreamEvents() {
   console.log(`\n... total streaming tokens: ${tokenCount}`);
 }
 
+/** 核查 A：节点级 on_chain_end 是否带齐 chatStream 持久化所需的字段 */
+async function verifyFinalStateFromEvents() {
+  console.log('\n=== 核查：节点级 on_chain_end 能否凑齐最终 state ===');
+  const stream = tutorGraph.streamEvents(testInput, { version: 'v2' });
+  const captured: Record<string, unknown> = {};
+  for await (const event of stream) {
+    if (event.event === 'on_chain_end') {
+      const name = event.name;
+      if (['classify', 'compress', 'respond', 'LangGraph'].includes(name)) {
+        captured[name] = event.data?.output;
+        console.log(`  [on_chain_end] ${name}:`, Object.keys((event.data?.output ?? {}) as object));
+      }
+    }
+  }
+  const root = captured['LangGraph'] as Record<string, unknown> | undefined;
+  console.log('\n  root output keys:', root ? Object.keys(root) : '(missing)');
+  console.log('  结论提示：chatStream() 可直接从以下来源组装 done 事件字段');
+  console.log('    - scenario:           classify.output.scenario 或 root.scenario');
+  console.log('    - reply:              respond.output.reply 或 root.reply');
+  console.log('    - compressedHistory:  compress.output.compressedHistory 或 root.compressedHistory');
+  console.log('    - compressedSummary:  compress.output.compressedSummary 或 root.compressedSummary');
+}
+
+/** 核查 B：向 streamEvents 传入 AbortSignal 是否能让其尽快中止并抛 AbortError */
+async function verifyAbortSignalPropagation() {
+  console.log('\n=== 核查：AbortSignal 是否被 streamEvents 尊重 ===');
+  const controller = new AbortController();
+  const stream = tutorGraph.streamEvents(testInput, {
+    version: 'v2',
+    signal: controller.signal,
+  });
+  let eventCount = 0;
+  try {
+    for await (const event of stream) {
+      eventCount++;
+      if (event.event === 'on_chat_model_stream' && eventCount > 2) {
+        console.log('  触发 abort...');
+        controller.abort();
+      }
+    }
+    console.log(`  [WARN] 迭代自然结束（共 ${eventCount} 个事件），未抛 AbortError`);
+  } catch (err) {
+    const name = (err as Error).name;
+    console.log(`  ✓ 迭代终止，抛错类型：${name}`);
+  }
+}
+
 async function main() {
   console.log('LangGraph Streaming 技术验证');
   console.log('============================');
@@ -72,6 +119,8 @@ async function main() {
   await verifyValuesMode();
   await verifyUpdatesMode();
   await verifyStreamEvents();
+  await verifyFinalStateFromEvents();
+  await verifyAbortSignalPropagation();
 
   console.log('\n✅ Streaming 验证完成');
 }
