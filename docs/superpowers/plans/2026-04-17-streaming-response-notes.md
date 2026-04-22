@@ -8,13 +8,15 @@
 
 `userMessage`, `scenario`, `history`, `summary`, `compressedHistory`, `compressedSummary`, `systemPrompt`, `fewShot`, `hasTools`, `messages`, `toolIterations`, `reply`
 
-因此 **`scenario` / `reply` / `compressedHistory` / `compressedSummary` 均可直接从 root 读取**，无需仅依赖节点级聚合。节点级 `on_chain_end` 仍可作为对照或兜底：
+因此 `**scenario` / `reply` / `compressedHistory` / `compressedSummary` 均可直接从 root 读取**，无需仅依赖节点级聚合。节点级 `on_chain_end` 仍可作为对照或兜底：
 
-| 节点名       | `output` keys（本次观测）                    |
-|-------------|-----------------------------------------------|
-| `compress`  | `compressedHistory`, `compressedSummary`    |
-| `classify`  | `scenario`                                    |
-| `respond`   | `reply`                                       |
+
+| 节点名        | `output` keys（本次观测）                      |
+| ---------- | ---------------------------------------- |
+| `compress` | `compressedHistory`, `compressedSummary` |
+| `classify` | `scenario`                               |
+| `respond`  | `reply`                                  |
+
 
 后续 `chatStream()` 字段策略：**优先消费 root 最终 `on_chain_end`**；若将来版本 root 形状变化，再回退到上表节点级拼装。
 
@@ -34,3 +36,19 @@
 
 - Task 3+ 事件映射与持久化：**以本笔记 root 形状为准**；spec 中「节点级聚合」仍成立且更稳健，但当前图 **root 已足够**。
 - Plan 中「post-Task 1 mock 下沉」待办：在 Task 15 回归时按 plan 勾选。
+
+## 5. Task 3 Step 0：与 notes 对齐 fake 事件 shape（阻塞性前置）
+
+对照 `docs/superpowers/plans/2026-04-17-streaming-response.md` Task 3 Step 1 中的 `fakeEvents` 与上文 **§1 表**：
+
+
+| `name`     | Step 1 fake 中 `data.output`                        | §1 实测 keys                               | 结论  |
+| ---------- | -------------------------------------------------- | ---------------------------------------- | --- |
+| `classify` | `{ scenario: 'VOCABULARY' }`                       | `scenario`                               | 一致  |
+| `compress` | `{ compressedHistory: [], compressedSummary: '' }` | `compressedHistory`, `compressedSummary` | 一致  |
+| `respond`  | `{ reply: 'Hello' }`                               | `reply`                                  | 一致  |
+
+
+- 图在 `streamEvents` v2 下**会**发出上述节点的 `on_chain_end`，且 `data.output` 为**扁平字段**（非 `{ classify: { scenario } }` 等嵌套），**无需**因 shape 不符而先改 Step 1 fake / chatStream 分支。
+- **✅ shape 已对齐**（Task 3 Step 0 完成，可进入 Step 1）。
+
