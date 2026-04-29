@@ -90,3 +90,40 @@ describe('chatStream — happy path', () => {
     expect(rows[1]).toMatchObject({ role: 'assistant', content: 'Hello', scenario: 'VOCABULARY' });
   });
 });
+
+describe('chatStream — abort', () => {
+  it('stops silently and does not persist when signal aborts mid-stream', async () => {
+    let aborted = false;
+    // 默认 mock 工厂（见 Task 3 Step 1）已按 signal.aborted 抛 AbortError，这里只需投喂事件即可。
+    // 至少三条：否则消费 meta + token 后队列已空，生成器正常结束，不会走到「下一轮 yield 前检查 aborted」。
+    fakeEvents.push(
+      { event: 'on_chain_end', name: 'classify', data: { output: { scenario: 'VOCABULARY' } } },
+      { event: 'on_chat_model_stream', data: { chunk: { content: 'He' } } },
+      { event: 'on_chat_model_stream', data: { chunk: { content: 'llo' } } },
+    );
+
+    const session = sessionManager.getDefaultSession();
+    const controller = new AbortController();
+    const events: StreamEvent[] = [];
+    const iter = chatStream(session, 'hi', controller.signal)[Symbol.asyncIterator]();
+
+    // 消费几个事件后 abort
+    events.push((await iter.next()).value as StreamEvent); // meta
+    events.push((await iter.next()).value as StreamEvent); // token 'He'
+    controller.abort();
+    aborted = true;
+
+    try {
+      for (let r = await iter.next(); !r.done; r = await iter.next()) {
+        events.push(r.value);
+      }
+    } catch {
+      /* 允许冒出 AbortError；chatStream 也可选择静默吞掉 */
+    }
+
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(messageRepo.getRecentMessages()).toHaveLength(0);
+    expect(aborted).toBe(true);
+  });
+});
