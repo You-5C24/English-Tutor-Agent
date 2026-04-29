@@ -27,6 +27,7 @@ const mockedResetConversation = vi.mocked(chatApi.resetConversation);
 /** 默认空历史；crypto.randomUUID 按调用顺序固定返回值，便于断言消息 id */
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubEnv('VITE_STREAMING', 'false'); // 本文件只测 JSON `sendChatMessage`，与流式专项测隔离
   mockedFetchHistory.mockResolvedValue({ messages: [] });
   vi.stubGlobal('crypto', {
     randomUUID: vi
