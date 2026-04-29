@@ -27,7 +27,7 @@ function newMessageId(): string {
  * 不变量：
  * - 正常路径：meta(可选) → token* → done
  * - 合法中止：不 yield 终态帧、不更新 session、不落库（静默结束）
- * - 失败：yield error（LLM_ERROR / INTERNAL），且不落库
+ * - 失败：yield error（图路径：LLM_ERROR / INTERNAL；落库路径：PERSIST_ERROR），且不落库
  */
 export async function* chatStream(
   session: Session,
@@ -114,23 +114,35 @@ export async function* chatStream(
   const userMessageId = newMessageId();
   const assistantMessageId = newMessageId();
   const now = Date.now();
-  runTransaction(() => {
-    sessionManager.save();
-    messageRepo.addMessage({
-      id: userMessageId,
-      role: 'user',
-      content: userMessage,
-      scenario: null,
-      timestamp: now - 1,
+
+  // 落库失败单独映射为 PERSIST_ERROR（与上方图迭代 catch 中的 LLM_ERROR / INTERNAL 区分）。
+  try {
+    runTransaction(() => {
+      sessionManager.save();
+      messageRepo.addMessage({
+        id: userMessageId,
+        role: 'user',
+        content: userMessage,
+        scenario: null,
+        timestamp: now - 1,
+      });
+      messageRepo.addMessage({
+        id: assistantMessageId,
+        role: 'assistant',
+        content: collected.reply,
+        scenario: collected.scenario ?? null,
+        timestamp: now,
+      });
     });
-    messageRepo.addMessage({
-      id: assistantMessageId,
-      role: 'assistant',
-      content: collected.reply,
-      scenario: collected.scenario ?? null,
-      timestamp: now,
-    });
-  });
+  } catch (err) {
+    const e = err as Error;
+    yield {
+      type: 'error',
+      code: 'PERSIST_ERROR',
+      message: e.message ?? 'persistence failed',
+    };
+    return;
+  }
 
   yield {
     type: 'done',

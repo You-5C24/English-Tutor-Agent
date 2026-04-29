@@ -190,3 +190,50 @@ describe('chatStream — LLM error', () => {
     expect(messageRepo.getRecentMessages()).toHaveLength(0);
   });
 });
+
+/** Task 6：图已成功跑完并产出 reply，但事务落库失败 → SSE error（PERSIST_ERROR），不得 yield done。 */
+describe('chatStream — persist error', () => {
+  it('emits PERSIST_ERROR when the transaction fails after graph succeeds', async () => {
+    // 默认 fakeEvents 工厂消费完整序列；末尾 LangGraph root 事件仅贴近真实流，chatStream 当前忽略未知节点名。
+    fakeEvents.push(
+      {
+        event: 'on_chain_end',
+        name: 'classify',
+        data: { output: { scenario: 'EXPRESSION' } },
+      },
+      { event: 'on_chat_model_stream', data: { chunk: { content: 'Hi' } } },
+      {
+        event: 'on_chain_end',
+        name: 'compress',
+        data: { output: { compressedHistory: [], compressedSummary: '' } },
+      },
+      {
+        event: 'on_chain_end',
+        name: 'respond',
+        data: { output: { reply: 'Hi' } },
+      },
+      {
+        event: 'on_chain_end',
+        name: 'LangGraph',
+        data: { output: { reply: 'Hi', scenario: 'EXPRESSION' } },
+      },
+    );
+
+    // 在 runTransaction 内的 addMessage 抛错 → 模拟磁盘/DB 故障；实现应在事务外 catch 并 yield，而非冒泡到 collect。
+    const spy = vi.spyOn(messageRepo, 'addMessage').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    try {
+      const session = sessionManager.getDefaultSession();
+      const events = await collect(
+        chatStream(session, 'hi', new AbortController().signal),
+      );
+      const last = events.at(-1);
+      expect(last).toMatchObject({ type: 'error', code: 'PERSIST_ERROR' });
+      // 失败路径不得先发出 done；事务应未提交成功（Step 3 后由实现保证）。
+      expect(events.filter((e) => e.type === 'done')).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
