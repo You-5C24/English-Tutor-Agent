@@ -6,6 +6,7 @@ export interface ChatWindowProps {
   messages: Message[];
   isStreaming: boolean;
   error: string | null;
+  stopToast?: boolean;
   onSend: (text: string) => void;
   onDismissError: () => void;
   onReset: () => void;
@@ -17,6 +18,7 @@ export function ChatWindow({
   messages,
   isStreaming,
   error,
+  stopToast = false,
   onSend,
   onDismissError,
   onReset,
@@ -48,6 +50,14 @@ export function ChatWindow({
         </div>
       )}
       <MessageList messages={messages} isStreaming={isStreaming} />
+      {stopToast && (
+        <div className="flex shrink-0 items-center border-t border-border/70 bg-accent/40 px-4 py-2 text-sm text-foreground">
+          <span className="mr-2 text-base leading-none" aria-hidden>
+            ⏹
+          </span>
+          <span>已停止</span>
+        </div>
+      )}
       <ChatInput isStreaming={isStreaming} onSend={onSend} onStop={onStop} />
     </div>
   );

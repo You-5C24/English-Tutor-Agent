@@ -31,6 +31,11 @@ export function MessageBubble({
             : 'bg-muted'
         }`}
       >
+        {!isUser && message.scenario ? (
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/80">
+            {message.scenario}
+          </div>
+        ) : null}
         {/* user 消息保持纯文本，避免 *、** 等被意外解析；assistant 消息渲染 Markdown */}
         {isUser ? (
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>

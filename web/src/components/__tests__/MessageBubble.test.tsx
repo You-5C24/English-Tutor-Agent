@@ -37,6 +37,11 @@ describe('MessageBubble', () => {
     expect(screen.getByText('Hello! How can I help you?')).toBeInTheDocument();
   });
 
+  it('shows scenario badge for assistant message when scenario is present', () => {
+    render(<MessageBubble message={assistantMessage} />);
+    expect(screen.getByText('greeting')).toBeInTheDocument();
+  });
+
   // 布局：用户右对齐、助手左对齐（通过外层 flex 容器的 utility class 约定）
   it('applies different alignment for user vs assistant', () => {
     const { container: userContainer } = render(

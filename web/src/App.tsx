@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConversation } from './hooks/useConversation';
 import { ChatWindow } from './components/ChatWindow';
 
@@ -12,6 +13,28 @@ export default function App() {
     resetConversation,
     stop,
   } = useConversation();
+  const [stopToast, setStopToast] = useState(false);
+  const stopToastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (stopToastTimerRef.current != null) {
+        window.clearTimeout(stopToastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleStop = useCallback(() => {
+    stop?.();
+    setStopToast(true);
+    if (stopToastTimerRef.current != null) {
+      window.clearTimeout(stopToastTimerRef.current);
+    }
+    stopToastTimerRef.current = window.setTimeout(() => {
+      setStopToast(false);
+      stopToastTimerRef.current = null;
+    }, 2000);
+  }, [stop]);
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -24,10 +47,11 @@ export default function App() {
           messages={messages}
           isStreaming={isStreaming}
           error={error}
+          stopToast={stopToast}
           onSend={sendMessage}
           onDismissError={clearError}
           onReset={resetConversation}
-          onStop={stop}
+          onStop={handleStop}
         />
       </main>
     </div>

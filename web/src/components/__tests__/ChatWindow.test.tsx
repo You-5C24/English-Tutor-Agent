@@ -86,4 +86,20 @@ describe('ChatWindow', () => {
 
     expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
   });
+
+  it('renders stop toast when stopToast is true', () => {
+    render(
+      <ChatWindow
+        messages={messages}
+        isStreaming={false}
+        error={null}
+        stopToast
+        onSend={vi.fn()}
+        onDismissError={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('已停止')).toBeInTheDocument();
+  });
 });
