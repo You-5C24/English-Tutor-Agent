@@ -1,6 +1,5 @@
 /**
  * ChatWindow 单元测试：组合 MessageList + ChatInput + 错误条；
- * Step 1 阶段组件尚未实现，运行测试应失败（找不到 ../ChatWindow）。
  */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -20,12 +19,11 @@ const messages: Message[] = [
 ];
 
 describe('ChatWindow', () => {
-  // 正常态：列表与输入可见，且无错误条（error 为 null）
   it('renders messages, input, and no error bar when error is null', () => {
     render(
       <ChatWindow
         messages={messages}
-        isLoading={false}
+        isStreaming={false}
         error={null}
         onSend={vi.fn()}
         onDismissError={vi.fn()}
@@ -38,12 +36,11 @@ describe('ChatWindow', () => {
     expect(screen.getByPlaceholderText('输入消息...')).toBeInTheDocument();
   });
 
-  // 有 error 时展示文案（由父组件传入，如 hook 里的 API 错误）
   it('renders error bar when error is set', () => {
     render(
       <ChatWindow
         messages={[]}
-        isLoading={false}
+        isStreaming={false}
         error="Something went wrong"
         onSend={vi.fn()}
         onDismissError={vi.fn()}
@@ -54,7 +51,6 @@ describe('ChatWindow', () => {
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
   });
 
-  // 错误条关闭按钮应触发 onDismissError（通常即 clearError）
   it('calls onDismissError when close button is clicked', async () => {
     const user = userEvent.setup();
     const onDismissError = vi.fn();
@@ -62,7 +58,7 @@ describe('ChatWindow', () => {
     render(
       <ChatWindow
         messages={[]}
-        isLoading={false}
+        isStreaming={false}
         error="Error"
         onSend={vi.fn()}
         onDismissError={onDismissError}
@@ -72,5 +68,22 @@ describe('ChatWindow', () => {
 
     await user.click(screen.getByRole('button', { name: '✕' }));
     expect(onDismissError).toHaveBeenCalledOnce();
+  });
+
+  it('passes onStop to ChatInput when streaming', () => {
+    const onStop = vi.fn();
+    render(
+      <ChatWindow
+        messages={messages}
+        isStreaming
+        error={null}
+        onSend={vi.fn()}
+        onDismissError={vi.fn()}
+        onReset={vi.fn()}
+        onStop={onStop}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
   });
 });

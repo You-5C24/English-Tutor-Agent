@@ -3,6 +3,8 @@ import type { Message } from '../types/chat';
 
 interface MessageBubbleProps {
   message: Message;
+  /** 流式输出中最后一条助手消息末尾的呼吸光标 */
+  showStreamingCursor?: boolean;
 }
 
 // prose modifier 说明：
@@ -14,7 +16,10 @@ interface MessageBubbleProps {
 const proseClasses = 'prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 prose-p:my-1 prose-ul:my-1 prose-ol:my-1';
 
 /** 单条聊天消息：用户靠右纯文本气泡，助手靠左 Markdown 渲染气泡。 */
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  showStreamingCursor = false,
+}: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
   return (
@@ -29,6 +34,15 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {/* user 消息保持纯文本，避免 *、** 等被意外解析；assistant 消息渲染 Markdown */}
         {isUser ? (
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+        ) : showStreamingCursor ? (
+          // 流式阶段优先保证光标紧跟内容末尾；结束后再按 Markdown 完整渲染
+          <p className="text-sm whitespace-pre-wrap wrap-break-word">
+            {message.content}
+            <span
+              className="inline-block w-1.5 h-4 bg-foreground/70 animate-pulse align-middle ml-1"
+              aria-hidden
+            />
+          </p>
         ) : (
           <div className={proseClasses}>
             <ReactMarkdown>{message.content}</ReactMarkdown>

@@ -5,13 +5,16 @@ import { ScrollArea } from './ui/scroll-area';
 
 interface MessageListProps {
   messages: Message[];
-  isLoading: boolean;
+  isStreaming: boolean;
 }
 
-/** 可滚动消息区：列表 + 加载占位；新消息时平滑滚到底部锚点。 */
-export function MessageList({ messages, isLoading }: MessageListProps) {
-  // 不触发重渲染的 DOM 引用，仅用于滚动到底部
+/** 可滚动消息区；流式时在最后一条助手消息后显示打字光标；新消息时平滑滚到底部锚点。 */
+export function MessageList({ messages, isStreaming }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const last = messages[messages.length - 1];
+  const cursorOnLastAssistant =
+    isStreaming && last != null && last.role === 'assistant';
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -20,16 +23,15 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
   return (
     <ScrollArea className="min-h-0 flex-1 p-4">
       <div className="space-y-4">
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+        {messages.map((msg, index) => (
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            showStreamingCursor={
+              cursorOnLastAssistant && index === messages.length - 1
+            }
+          />
         ))}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-muted rounded-2xl px-4 py-2">
-              <p className="text-sm text-muted-foreground">正在思考...</p>
-            </div>
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
     </ScrollArea>

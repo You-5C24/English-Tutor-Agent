@@ -3,7 +3,15 @@ import { ChatWindow } from './components/ChatWindow';
 
 export default function App() {
   // 对话状态集中在 hook：消息、加载、错误、发送、清除错误、重新开始
-  const { messages, isLoading, error, sendMessage, clearError, resetConversation } = useConversation();
+  const {
+    messages,
+    isStreaming,
+    error,
+    sendMessage,
+    clearError,
+    resetConversation,
+    stop,
+  } = useConversation();
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -14,11 +22,12 @@ export default function App() {
       <main className="min-h-0 flex-1 overflow-hidden">
         <ChatWindow
           messages={messages}
-          isLoading={isLoading}
+          isStreaming={isStreaming}
           error={error}
           onSend={sendMessage}
           onDismissError={clearError}
           onReset={resetConversation}
+          onStop={stop}
         />
       </main>
     </div>

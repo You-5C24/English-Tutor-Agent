@@ -1,13 +1,17 @@
 import { useState, useRef, useLayoutEffect, useCallback } from 'react';
 import { Button } from './ui/button';
 
-interface ChatInputProps {
-  isLoading: boolean;
+export interface ChatInputProps {
+  isStreaming: boolean;
   onSend: (text: string) => void;
+  onStop?: () => void;
 }
 
-/** 底部输入区：圆角框内嵌 textarea + 发送，多行增高时按钮贴在右下角，不单独占一列。 */
-export function ChatInput({ isLoading, onSend }: ChatInputProps) {
+/**
+ * 底部输入区：圆角框内嵌 textarea + 发送，多行增高时按钮贴在右下角，不单独占一列。
+ * 流式中 textarea 仍可编辑；发送/停止二选一；流式时 doSend 为 no-op 且不清空输入。
+ */
+export function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -24,8 +28,9 @@ export function ChatInput({ isLoading, onSend }: ChatInputProps) {
   }, [input, syncTextareaHeight]);
 
   const doSend = () => {
+    if (isStreaming) return;
     const trimmed = input.trim();
-    if (!trimmed || isLoading) return;
+    if (!trimmed) return;
     onSend(trimmed);
     setInput('');
   };
@@ -51,14 +56,19 @@ export function ChatInput({ isLoading, onSend }: ChatInputProps) {
             }
           }}
           placeholder="输入消息..."
-          disabled={isLoading}
           rows={1}
-          className="min-h-9 min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-1.5 pr-1 text-sm leading-snug outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-9 min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-1.5 pr-1 text-sm leading-snug outline-none placeholder:text-muted-foreground"
         />
         <div className="shrink-0 self-end pb-px">
-          <Button type="submit" disabled={isLoading || !input.trim()} size="sm">
-            发送
-          </Button>
+          {isStreaming && onStop ? (
+            <Button type="button" size="sm" variant="destructive" onClick={onStop}>
+              停止
+            </Button>
+          ) : (
+            <Button type="submit" size="sm" disabled={isStreaming || !input.trim()}>
+              发送
+            </Button>
+          )}
         </div>
       </div>
     </form>

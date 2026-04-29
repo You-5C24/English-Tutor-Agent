@@ -1,6 +1,5 @@
 /**
- * ChatInput 单元测试：占位符、发送/回车行为、加载与空内容禁用逻辑。
- * Step 1 阶段组件尚未实现，运行测试应失败（找不到 ../ChatInput）。
+ * ChatInput 单元测试：占位符、发送/回车行为、流式与空内容禁用逻辑。
  */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -10,7 +9,7 @@ import { ChatInput } from '@/components/ChatInput';
 describe('ChatInput', () => {
   // 基础结构：多行输入 + 发送按钮，便于无障碍与交互测试
   it('renders textarea and send button', () => {
-    render(<ChatInput isLoading={false} onSend={vi.fn()} />);
+    render(<ChatInput isStreaming={false} onSend={vi.fn()} />);
     expect(screen.getByPlaceholderText('输入消息...')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '发送' })).toBeInTheDocument();
   });
@@ -19,7 +18,7 @@ describe('ChatInput', () => {
   it('calls onSend with trimmed text and clears input on submit', async () => {
     const user = userEvent.setup();
     const onSend = vi.fn();
-    render(<ChatInput isLoading={false} onSend={onSend} />);
+    render(<ChatInput isStreaming={false} onSend={onSend} />);
 
     const textarea = screen.getByPlaceholderText('输入消息...');
     await user.type(textarea, '  Hello teacher  ');
@@ -33,7 +32,7 @@ describe('ChatInput', () => {
   it('submits on Enter key (without Shift)', async () => {
     const user = userEvent.setup();
     const onSend = vi.fn();
-    render(<ChatInput isLoading={false} onSend={onSend} />);
+    render(<ChatInput isStreaming={false} onSend={onSend} />);
 
     const textarea = screen.getByPlaceholderText('输入消息...');
     await user.type(textarea, 'Hello');
@@ -46,7 +45,7 @@ describe('ChatInput', () => {
   it('does not submit on Shift+Enter', async () => {
     const user = userEvent.setup();
     const onSend = vi.fn();
-    render(<ChatInput isLoading={false} onSend={onSend} />);
+    render(<ChatInput isStreaming={false} onSend={onSend} />);
 
     const textarea = screen.getByPlaceholderText('输入消息...');
     await user.type(textarea, 'Hello');
@@ -55,17 +54,35 @@ describe('ChatInput', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  // 请求进行中：禁止再次输入与提交，避免重复发送
-  it('disables textarea and button when loading', () => {
-    render(<ChatInput isLoading={true} onSend={vi.fn()} />);
+  // 流式中：输入区不禁用；有 onStop 时显示停止按钮
+  it('keeps textarea enabled and shows stop when streaming with onStop', () => {
+    const onStop = vi.fn();
+    render(<ChatInput isStreaming onSend={vi.fn()} onStop={onStop} />);
 
-    expect(screen.getByPlaceholderText('输入消息...')).toBeDisabled();
+    expect(screen.getByPlaceholderText('输入消息...')).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+  });
+
+  it('calls onStop when stop button is clicked', async () => {
+    const user = userEvent.setup();
+    const onStop = vi.fn();
+    render(<ChatInput isStreaming onSend={vi.fn()} onStop={onStop} />);
+
+    await user.click(screen.getByRole('button', { name: '停止' }));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  // 流式但无 onStop：仍显示发送且禁用，textarea 可输入下一条草稿
+  it('disables send only when streaming without onStop', () => {
+    render(<ChatInput isStreaming onSend={vi.fn()} />);
+
+    expect(screen.getByPlaceholderText('输入消息...')).not.toBeDisabled();
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
   });
 
   // 无有效内容时按钮不可用（trim 后为空）
   it('disables send button when input is empty', () => {
-    render(<ChatInput isLoading={false} onSend={vi.fn()} />);
+    render(<ChatInput isStreaming={false} onSend={vi.fn()} />);
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
   });
 
@@ -73,12 +90,26 @@ describe('ChatInput', () => {
   it('does not call onSend when input is only whitespace', async () => {
     const user = userEvent.setup();
     const onSend = vi.fn();
-    render(<ChatInput isLoading={false} onSend={onSend} />);
+    render(<ChatInput isStreaming={false} onSend={onSend} />);
 
     const textarea = screen.getByPlaceholderText('输入消息...');
     await user.type(textarea, '   ');
     await user.click(screen.getByRole('button', { name: '发送' }));
 
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  // 流式中 Enter / 提交路径不调用 onSend、不清空
+  it('does not send or clear when streaming', async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    render(<ChatInput isStreaming onSend={onSend} onStop={vi.fn()} />);
+
+    const textarea = screen.getByPlaceholderText('输入消息...');
+    await user.type(textarea, 'draft');
+    await user.keyboard('{Enter}');
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue('draft');
   });
 });

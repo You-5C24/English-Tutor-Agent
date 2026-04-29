@@ -130,7 +130,9 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       reply.raw.writeHead(200, SSE_HEADERS);
 
       const controller = new AbortController();
-      request.raw.on('close', () => controller.abort());
+      const abortStream = () => controller.abort();
+      // `request.raw.close` 可能在请求体读完后触发；SSE 期间应监听响应侧连接关闭。
+      reply.raw.on('close', abortStream);
 
       // 不变量：chatStream 已 yield done/error 后，catch 不再补发 error，避免双终态。
       let emittedTerminal = false;

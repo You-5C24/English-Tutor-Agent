@@ -2,23 +2,25 @@ import type { Message } from '../types/chat';
 import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';
 
-interface ChatWindowProps {
+export interface ChatWindowProps {
   messages: Message[];
-  isLoading: boolean;
+  isStreaming: boolean;
   error: string | null;
   onSend: (text: string) => void;
   onDismissError: () => void;
   onReset: () => void;
+  onStop?: () => void;
 }
 
 /** 聊天主容器：顶部标题栏（含重新开始）+ 可选错误条 + 消息列表 + 底部输入。 */
 export function ChatWindow({
   messages,
-  isLoading,
+  isStreaming,
   error,
   onSend,
   onDismissError,
   onReset,
+  onStop,
 }: ChatWindowProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -45,8 +47,8 @@ export function ChatWindow({
           </button>
         </div>
       )}
-      <MessageList messages={messages} isLoading={isLoading} />
-      <ChatInput isLoading={isLoading} onSend={onSend} />
+      <MessageList messages={messages} isStreaming={isStreaming} />
+      <ChatInput isStreaming={isStreaming} onSend={onSend} onStop={onStop} />
     </div>
   );
 }
