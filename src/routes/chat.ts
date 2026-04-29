@@ -7,11 +7,21 @@
  * - 新增 POST /reset 重置对话
  * - chat 成功后在同一事务中持久化 session + messages
  */
+import type { OutgoingHttpHeaders } from 'node:http';
 import { FastifyInstance } from 'fastify';
 import { chat } from '../services/chat-service.js';
+import { chatStream } from '../services/chat-stream-service.js';
+import { serializeSSE } from '../services/sse-protocol.js';
 import * as sessionManager from '../services/session-manager.js';
 import * as messageRepo from '../db/message-repo.js';
 import { runTransaction } from '../db/database.js';
+
+const SSE_HEADERS: OutgoingHttpHeaders = {
+  'Content-Type': 'text/event-stream; charset=utf-8',
+  'Cache-Control': 'no-cache, no-transform',
+  Connection: 'keep-alive',
+  'X-Accel-Buffering': 'no',
+};
 
 /** 与 `web/src/hooks/useConversation.ts` 一致：优先 `randomUUID`，否则时间戳 + 随机串 */
 function newMessageId(): string {
@@ -94,6 +104,61 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
           code: 'LLM_ERROR',
           statusCode: 500,
         });
+      }
+    }
+  );
+
+  /** POST /chat/stream — SSE：meta → token* → done | error（Phase 4 streaming） */
+  app.post<{ Body: ChatBody }>(
+    '/chat/stream',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['message'],
+          properties: {
+            message: { type: 'string', minLength: 1, maxLength: 5000 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { message } = request.body;
+      const session = sessionManager.getDefaultSession();
+
+      reply.hijack();
+      reply.raw.writeHead(200, SSE_HEADERS);
+
+      const controller = new AbortController();
+      request.raw.on('close', () => controller.abort());
+
+      // 不变量：chatStream 已 yield done/error 后，catch 不再补发 error，避免双终态。
+      let emittedTerminal = false;
+
+      try {
+        for await (const evt of chatStream(
+          session,
+          message,
+          controller.signal
+        )) {
+          if (evt.type === 'done' || evt.type === 'error') {
+            emittedTerminal = true;
+          }
+          reply.raw.write(serializeSSE(evt));
+        }
+      } catch (err) {
+        request.log.error(err, 'streaming chat route failed');
+        if (!emittedTerminal && !controller.signal.aborted) {
+          reply.raw.write(
+            serializeSSE({
+              type: 'error',
+              code: 'INTERNAL',
+              message: 'internal error',
+            })
+          );
+        }
+      } finally {
+        reply.raw.end();
       }
     }
   );
