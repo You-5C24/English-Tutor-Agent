@@ -5,6 +5,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { StreamEvent } from '@/services/sse-protocol';
 
+import { chatStream } from '@/services/chat-stream-service';
+
 /**
  * 可变的伪 LangGraph 事件队列；由 `vi.mock('@/graph/index')` 中的 async generator 消费。
  * 必须用 vi.hoisted：mock 工厂会被 Vitest 提升到文件顶，若这里用普通模块级 let，
@@ -15,22 +17,24 @@ const { fakeEvents } = vi.hoisted(() => ({ fakeEvents: [] as unknown[] }));
 vi.mock('@/graph/index', () => ({
   tutorGraph: {
     /** 与真实 `streamEvents` 签名对齐；yield 前检查 abort 以模拟 LangGraph 行为 */
-    streamEvents: vi.fn((_input: unknown, opts: { signal?: AbortSignal } = {}) =>
-      (async function* () {
-        for (const e of fakeEvents) {
-          if (opts.signal?.aborted) {
-            const err = new Error('aborted');
-            err.name = 'AbortError';
-            throw err;
+    streamEvents: vi.fn(
+      (_input: unknown, opts: { signal?: AbortSignal } = {}) =>
+        (async function* () {
+          for (const e of fakeEvents) {
+            if (opts.signal?.aborted) {
+              const err = new Error('aborted');
+              err.name = 'AbortError';
+              throw err;
+            }
+            yield e;
           }
-          yield e;
-        }
-      })()
+        })()
     ),
   },
 }));
 
-import { chatStream } from '@/services/chat-stream-service';
+/** Type-only: avoid `infer`/utility chains and runtime import of mocked graph (lint + `useImportType`). */
+type TutorGraphRef = typeof import('@/graph/index').tutorGraph;
 import * as messageRepo from '@/db/message-repo';
 import * as sessionManager from '@/services/session-manager';
 import { initTestDb, closeDb } from '@/db/__tests__/test-helpers';
@@ -47,7 +51,9 @@ afterEach(() => {
 });
 
 /** 消费 async iterable，便于对完整 StreamEvent 序列做断言 */
-async function collect(iter: AsyncIterable<StreamEvent>): Promise<StreamEvent[]> {
+async function collect(
+  iter: AsyncIterable<StreamEvent>
+): Promise<StreamEvent[]> {
   const out: StreamEvent[] = [];
   for await (const evt of iter) out.push(evt);
   return out;
@@ -60,7 +66,11 @@ describe('chatStream — happy path', () => {
    */
   it('emits meta → tokens → done and persists user + assistant rows', async () => {
     fakeEvents.push(
-      { event: 'on_chain_end', name: 'classify', data: { output: { scenario: 'VOCABULARY' } } },
+      {
+        event: 'on_chain_end',
+        name: 'classify',
+        data: { output: { scenario: 'VOCABULARY' } },
+      },
       { event: 'on_chat_model_stream', data: { chunk: { content: 'Hel' } } },
       { event: 'on_chat_model_stream', data: { chunk: { content: 'lo' } } },
       {
@@ -68,7 +78,11 @@ describe('chatStream — happy path', () => {
         name: 'compress',
         data: { output: { compressedHistory: [], compressedSummary: '' } },
       },
-      { event: 'on_chain_end', name: 'respond', data: { output: { reply: 'Hello' } } },
+      {
+        event: 'on_chain_end',
+        name: 'respond',
+        data: { output: { reply: 'Hello' } },
+      }
     );
 
     const session = sessionManager.getDefaultSession();
@@ -76,18 +90,27 @@ describe('chatStream — happy path', () => {
     const events = await collect(chatStream(session, 'hi', controller.signal));
 
     expect(events[0]).toEqual({ type: 'meta', scenario: 'VOCABULARY' });
-    expect(events.filter((e) => e.type === 'token').map((e) => (e as { delta: string }).delta)).toEqual([
-      'Hel',
-      'lo',
-    ]);
+    expect(
+      events
+        .filter((e) => e.type === 'token')
+        .map((e) => (e as { delta: string }).delta)
+    ).toEqual(['Hel', 'lo']);
     const done = events.at(-1);
-    expect(done).toMatchObject({ type: 'done', scenario: 'VOCABULARY', replyLength: 5 });
+    expect(done).toMatchObject({
+      type: 'done',
+      scenario: 'VOCABULARY',
+      replyLength: 5,
+    });
     expect((done as { messageId: string }).messageId).toMatch(/.+/);
 
     const rows = messageRepo.getRecentMessages();
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ role: 'user', content: 'hi' });
-    expect(rows[1]).toMatchObject({ role: 'assistant', content: 'Hello', scenario: 'VOCABULARY' });
+    expect(rows[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Hello',
+      scenario: 'VOCABULARY',
+    });
   });
 });
 
@@ -97,15 +120,21 @@ describe('chatStream — abort', () => {
     // 默认 mock 工厂（见 Task 3 Step 1）已按 signal.aborted 抛 AbortError，这里只需投喂事件即可。
     // 至少三条：否则消费 meta + token 后队列已空，生成器正常结束，不会走到「下一轮 yield 前检查 aborted」。
     fakeEvents.push(
-      { event: 'on_chain_end', name: 'classify', data: { output: { scenario: 'VOCABULARY' } } },
+      {
+        event: 'on_chain_end',
+        name: 'classify',
+        data: { output: { scenario: 'VOCABULARY' } },
+      },
       { event: 'on_chat_model_stream', data: { chunk: { content: 'He' } } },
-      { event: 'on_chat_model_stream', data: { chunk: { content: 'llo' } } },
+      { event: 'on_chat_model_stream', data: { chunk: { content: 'llo' } } }
     );
 
     const session = sessionManager.getDefaultSession();
     const controller = new AbortController();
     const events: StreamEvent[] = [];
-    const iter = chatStream(session, 'hi', controller.signal)[Symbol.asyncIterator]();
+    const iter = chatStream(session, 'hi', controller.signal)[
+      Symbol.asyncIterator
+    ]();
 
     // 消费几个事件后 abort
     events.push((await iter.next()).value as StreamEvent); // meta
@@ -125,5 +154,39 @@ describe('chatStream — abort', () => {
     expect(events.some((e) => e.type === 'error')).toBe(false);
     expect(messageRepo.getRecentMessages()).toHaveLength(0);
     expect(aborted).toBe(true);
+  });
+});
+
+/** Task 5：图内运行时抛错 → 映射为 SSE error（LLM_ERROR），且不写 DB（spec §7）。 */
+describe('chatStream — LLM error', () => {
+  it('emits error event with LLM_ERROR and does not persist', async () => {
+    // mockImplementationOnce：单次覆盖默认 fakeEvents 工厂；先发 classify + token，再模拟上游失败。
+    vi.mocked(
+      (await import('@/graph/index')).tutorGraph.streamEvents
+    ).mockImplementationOnce(
+      () =>
+        // LangGraph 类型声明与 async iterable 测试桩不完全一致，此处仅断言事件序列与抛错
+        (async function* () {
+          yield {
+            event: 'on_chain_end',
+            name: 'classify',
+            data: { output: { scenario: 'VOCABULARY' } },
+          };
+          yield {
+            event: 'on_chat_model_stream',
+            data: { chunk: { content: 'He' } },
+          };
+          throw new Error('LLM upstream failure');
+        })() as unknown as ReturnType<TutorGraphRef['streamEvents']>
+    );
+
+    const session = sessionManager.getDefaultSession();
+    const events = await collect(
+      chatStream(session, 'hi', new AbortController().signal)
+    );
+    const last = events.at(-1);
+    // 终态须为 error；chatStream 应在 catch 中 yield，而非让裸 Error 冒泡到 collect。
+    expect(last).toMatchObject({ type: 'error', code: 'LLM_ERROR' });
+    expect(messageRepo.getRecentMessages()).toHaveLength(0);
   });
 });

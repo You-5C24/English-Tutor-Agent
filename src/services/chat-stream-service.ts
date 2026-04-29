@@ -27,7 +27,7 @@ function newMessageId(): string {
  * 不变量：
  * - 正常路径：meta(可选) → token* → done
  * - 合法中止：不 yield 终态帧、不更新 session、不落库（静默结束）
- * - 失败：yield error，且不落库（Abort 以外的错误分类见后续处理）
+ * - 失败：yield error（LLM_ERROR / INTERNAL），且不落库
  */
 export async function* chatStream(
   session: Session,
@@ -86,7 +86,19 @@ export async function* chatStream(
     if (signal.aborted || e.name === 'AbortError') {
       return; // 合法中止：不 yield 终态帧、不落库
     }
-    throw err; // 交给 Task 5 的 error 分类
+
+    // 分类策略（对齐 spec §7）：
+    // - 图/LLM 链内冒出的错误 → 默认 LLM_ERROR（含实作上由工具节点抛出的情况，暂合并为同码）
+    // - 明显为 JS 编程错误 → INTERNAL
+    const code: 'LLM_ERROR' | 'INTERNAL' =
+      e.name === 'TypeError' || e.name === 'ReferenceError' ? 'INTERNAL' : 'LLM_ERROR';
+
+    yield {
+      type: 'error',
+      code,
+      message: e.message ?? 'upstream failure',
+    };
+    return;
   }
 
   // for-await 正常结束（图跑完）；合法中止不会到达此处。
